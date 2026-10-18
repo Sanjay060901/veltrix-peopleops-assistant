@@ -21,6 +21,8 @@ curl -s localhost:8000/chat -H 'X-Employee-Id: <id>' -H 'Content-Type: applicati
 python scripts/smoke.py       # runs the sample queries below against a running service
 ```
 
+A minimal chat page is served at **http://localhost:8000/**. Enter an employee ID, then chat. It shows the route, citations and tool calls for each answer, and Yes/No buttons when a write is waiting for confirmation. It only calls `/chat` and `/health`.
+
 Local development without Docker (needs Python 3.10+; Tesseract is only needed for the scanned PDF):
 
 ```bash

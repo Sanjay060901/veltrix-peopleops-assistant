@@ -34,6 +34,11 @@ def test_health_ok_after_ingestion(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_ui_page_is_served(client):
+    response = client.get("/")
+    assert response.status_code == 200 and "X-Employee-Id" in response.text
+
+
 def test_health_503_before_ready(settings):
     from fastapi.testclient import TestClient
 

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veltrix PeopleOps Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2430; --muted: #687384; --border: #dde2e8;
+    --accent: #2457c5; --accent-text: #ffffff; --user: #e8eefb; --error: #b42318; --ok: #1a7f4b;
+    --chip: #eef1f5; --warn-bg: #fff6e0; --warn-border: #f0c75e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151a; --panel: #1a1f26; --text: #e6e9ee; --muted: #9aa4b2; --border: #2c333d;
+      --accent: #6d9bff; --accent-text: #0d1117; --user: #1f2a40; --error: #ff7b72; --ok: #56d364;
+      --chip: #242b35; --warn-bg: #2d2614; --warn-border: #8a6d1f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .app { max-width: 860px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 17px; margin: 0 auto 0 0; font-weight: 600; }
+  label { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  input, button { font: inherit; }
+  input[type=text] { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
+  #employee { width: 110px; }
+  button { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .55; cursor: default; }
+  .status { font-size: 12px; color: var(--muted); }
+  .status.ok::before { content: "● "; color: var(--ok); }
+  .status.wait::before { content: "● "; color: var(--warn-border); }
+  #log { flex: 1; overflow-y: auto; padding: 18px 0; display: flex; flex-direction: column; gap: 14px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 12vh; }
+  .empty ul { list-style: none; padding: 0; }
+  .empty li { margin: 6px 0; }
+  .empty a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+  .msg.err { border-color: var(--error); color: var(--error); }
+  .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; white-space: normal; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 2px 9px; color: var(--muted); }
+  .chip.route { font-weight: 600; color: var(--text); }
+  .chip.success { color: var(--ok); } .chip.error { color: var(--error); }
+  details { margin-top: 6px; font-size: 12px; color: var(--muted); white-space: normal; }
+  details pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 12px; }
+  .confirm { margin-top: 10px; padding: 8px 10px; background: var(--warn-bg); border: 1px solid var(--warn-border);
+             border-radius: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; white-space: normal; }
+  form { display: flex; gap: 8px; padding: 12px 0 18px; border-top: 1px solid var(--border); }
+  #message { flex: 1; }
+  @media (max-width: 560px) { .msg { max-width: 100%; } header h1 { width: 100%; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Veltrix PeopleOps Assistant</h1>
+    <label>Employee ID <input id="employee" type="text" placeholder="E1234" autocomplete="off"></label>
+    <button id="newSession" type="button" title="Start a new conversation">New chat</button>
+    <span id="health" class="status wait">checking…</span>
+  </header>
+
+  <div id="log">
+    <div class="empty" id="empty">
+      <p>Enter your employee ID, then ask a question. Try:</p>
+      <ul>
+        <li><a>How many sick days do I get per year?</a></li>
+        <li><a>What is my leave balance?</a></li>
+        <li><a>How many annual leave days will I have by the end of December?</a></li>
+        <li><a>Book annual leave next Friday</a></li>
+        <li><a>Who in my team is on leave next week?</a></li>
+      </ul>
+    </div>
+  </div>
+
+  <form id="form">
+    <input id="message" type="text" placeholder="Ask about leave, holidays or HR policies…" autocomplete="off">
+    <button class="primary" id="send" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = $("log"), form = $("form"), input = $("message"), send = $("send"), employee = $("employee");
+  let sessionId = crypto.randomUUID();
+  let busy = false;
+
+  try { employee.value = localStorage.getItem("veltrix.employee") || ""; } catch (e) {}
+  employee.addEventListener("change", () => {
+    try { localStorage.setItem("veltrix.employee", employee.value.trim()); } catch (e) {}
+    newSession(); // a session belongs to one employee
+  });
+
+  function newSession() {
+    sessionId = crypto.randomUUID();
+    log.querySelectorAll(".msg").forEach((m) => m.remove());
+    $("empty").style.display = "";
+  }
+  $("newSession").addEventListener("click", newSession);
+
+  document.querySelectorAll(".empty a").forEach((a) =>
+    a.addEventListener("click", () => { input.value = a.textContent; input.focus(); }));
+
+  async function checkHealth() {
+    const el = $("health");
+    try {
+      const r = await fetch("/health");
+      el.textContent = r.ok ? "ready" : "ingesting…";
+      el.className = "status " + (r.ok ? "ok" : "wait");
+      if (!r.ok) setTimeout(checkHealth, 3000);
+    } catch (e) { el.textContent = "offline"; el.className = "status wait"; setTimeout(checkHealth, 5000); }
+  }
+  checkHealth();
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function addUser(text) {
+    $("empty").style.display = "none";
+    log.appendChild(el("div", "msg user", text));
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function addBot(body) {
+    const box = el("div", "msg bot", body.answer);
+    const meta = el("div", "meta");
+    meta.appendChild(el("span", "chip route", body.route));
+    (body.citations || []).forEach((c) => meta.appendChild(el("span", "chip", `${c.doc_id} · ${c.locator}`)));
+    (body.tool_calls || []).forEach((t) => meta.appendChild(el("span", "chip " + t.status, `${t.name} · ${t.status}`)));
+    box.appendChild(meta);
+    if ((body.tool_calls || []).length) {
+      const d = el("details");
+      d.appendChild(el("summary", "", "tool call arguments"));
+      d.appendChild(el("pre", "", JSON.stringify(body.tool_calls, null, 2)));
+      box.appendChild(d);
+    }
+    if (body.pending_confirmation) {
+      const c = el("div", "confirm");
+      c.appendChild(el("span", "", "Waiting for your confirmation."));
+      const yes = el("button", "primary", "Yes, go ahead");
+      const no = el("button", "", "No");
+      yes.type = no.type = "button";
+      yes.onclick = () => { c.remove(); ask("yes"); };
+      no.onclick = () => { c.remove(); ask("no"); };
+      c.append(yes, no);
+      box.appendChild(c);
+    }
+    log.appendChild(box);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function addError(text) {
+    log.appendChild(el("div", "msg bot err", text));
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function ask(text) {
+    const id = employee.value.trim();
+    if (!id) { employee.focus(); addError("Enter your employee ID first."); return; }
+    if (busy) return;
+    busy = true; send.disabled = true;
+    addUser(text);
+    const thinking = el("div", "msg bot", "…");
+    log.appendChild(thinking);
+    try {
+      const r = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Employee-Id": id },
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      });
+      thinking.remove();
+      if (r.ok) addBot(await r.json());
+      else if (r.status === 401) addError("Unknown employee ID.");
+      else if (r.status === 403) addError("This conversation belongs to another employee. Start a new chat.");
+      else if (r.status === 503) addError("The assistant is still starting up. Try again in a moment.");
+      else addError(`Request failed (HTTP ${r.status}).`);
+    } catch (e) {
+      thinking.remove();
+      addError("Could not reach the service.");
+    } finally {
+      busy = false; send.disabled = false; input.focus();
+    }
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    ask(text);
+  });
+})();
+</script>
+</body>
+</html>

@@ -7,9 +7,10 @@ import threading
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -26,6 +27,8 @@ from app.privacy.pii import registry, scrub_answer
 from app.retrieval.embeddings import load_embedder
 
 log = logging.getLogger("app")
+
+UI_PATH = Path(__file__).parent / "ui" / "index.html"
 
 
 @dataclass
@@ -80,6 +83,11 @@ def create_app(
 
     app = FastAPI(title="Veltrix PeopleOps Assistant", lifespan=lifespan)
     app.state.veltrix = state
+
+    @app.get("/", include_in_schema=False)
+    def ui():
+        """Optional minimal chat page; it only calls the public /chat and /health endpoints."""
+        return FileResponse(UI_PATH, media_type="text/html")
 
     @app.get("/health")
     def health():
