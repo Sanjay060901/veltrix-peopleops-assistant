@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 import shutil
 
@@ -11,12 +12,28 @@ log = logging.getLogger(__name__)
 OCR_DPI = 300
 
 
+def _tesseract_cmd() -> str | None:
+    """Tesseract on PATH, in TESSERACT_CMD, or in the standard Windows install folders."""
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    candidates = [os.environ.get("TESSERACT_CMD", "")]
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if base:
+            candidates.append(os.path.join(base, "Programs", "Tesseract-OCR", "tesseract.exe"))
+            candidates.append(os.path.join(base, "Tesseract-OCR", "tesseract.exe"))
+    return next((c for c in candidates if c and os.path.isfile(c)), None)
+
+
 def tesseract_available() -> bool:
     try:
-        import pytesseract  # noqa: F401
+        import pytesseract
     except ImportError:
         return False
-    return shutil.which("tesseract") is not None
+    cmd = _tesseract_cmd()
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    return cmd is not None
 
 
 def ocr_png_bytes(png: bytes) -> str:

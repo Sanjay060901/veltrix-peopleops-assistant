@@ -23,7 +23,7 @@ python scripts/smoke.py       # runs the sample queries below against a running 
 
 A minimal chat page is served at **http://localhost:8000/**. Enter an employee ID, then chat. It shows the route, citations and tool calls for each answer, and Yes/No buttons when a write is waiting for confirmation. It only calls `/chat` and `/health`.
 
-Local development without Docker (needs Python 3.10+; Tesseract is only needed for the scanned PDF):
+Local development without Docker (needs Python 3.10+; Tesseract is only needed for the scanned PDF, e.g. `winget install UB-Mannheim.TesseractOCR` on Windows):
 
 ```bash
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -105,7 +105,7 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 119 tests, plus one OCR test that is skipped when Tesseract is not installed. The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 120 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
