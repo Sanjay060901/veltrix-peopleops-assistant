@@ -53,8 +53,6 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 | `UI_ENABLED` | `false` | serve the development chat page at `/` |
 | `IDENTITY_SECRET` | – | production: require a gateway-signed `X-Employee-Signature` (≥ 32 chars); see Security |
 | `IDENTITY_MAX_AGE_SECONDS` | `300` | how long a signature stays valid |
-| `AUTH_MODE` | `header` | `header` (spec contract), `signed` (gateway HMAC) or `login` (the app's own sign-in) |
-| `COOKIE_SECURE`, `LOGIN_*` | see `.env.example` | login mode: HTTPS-only cookie, idle/absolute timeouts, lockout |
 | `CACHE_DIR` | `./.cache/ingest` | ingestion cache keyed by file SHA-256 (a Docker volume in Compose); empty disables it |
 
 ## Architecture
@@ -105,24 +103,6 @@ flowchart LR
 
 What an impersonator can and cannot do in header mode: they can read what the claimed employee may read, and book or cancel *that employee's* leave. They **cannot approve leave** (there is no approval feature), act on someone else's leave, read HR-only documents as a non-HR user, or pull bulk data.
 
-**Three identity modes** (`AUTH_MODE`):
-
-| Mode | Who decides the employee ID | Use for |
-|---|---|---|
-| `header` (default) | the `X-Employee-Id` header, trusted as-is | the assignment's API contract and automated tests |
-| `signed` | a login gateway, which signs the header (HMAC) | production behind SSO |
-| `login` | **the application itself**, through sign-in with a password | running the app on its own, without a gateway |
-
-**Application-level login (`AUTH_MODE=login`):**
-- Employees sign in with their employee ID and a password. Passwords are stored only as salted **scrypt** hashes in the added table `auth_credentials`. There is no self sign-up; an admin sets passwords:
-  `docker compose exec assistant python -m app.auth.manage set-password E2002 --generate` (or without `--generate` for a hidden prompt). The command also supports `list` and `remove`, and passwords need at least 10 characters with upper- and lower-case letters and a digit.
-- Signing in creates a server-side session. The browser holds only a random token in an **HttpOnly, SameSite=Strict** cookie (set `COOKIE_SECURE=true` behind HTTPS), which page scripts cannot read and other sites cannot send.
-- **`/chat` takes the identity from the session only.** A typed `X-Employee-Id` is never trusted: with no session the request gets 401, and a header that differs from the signed-in user also gets 401. So an employee who enters a manager's ID, in the UI or with the browser's developer tools, is refused.
-- Brute force is limited: after `LOGIN_MAX_FAILURES` (default 5) failures, the employee ID and the client address are each locked for `LOGIN_LOCKOUT_MINUTES` (15). Wrong passwords, unknown IDs and employees without a password all get the same message, at a similar cost.
-- Sessions expire after `LOGIN_IDLE_MINUTES` (30) of inactivity or `LOGIN_ABSOLUTE_HOURS` (8). A new sign-in ends the previous session. Resetting or removing a password ends existing sessions on their next request, even when the reset is done from the admin command in another process.
-- Requests from another site are refused (Origin check, on top of SameSite).
-- The UI shows a sign-in screen and "Signed in as … / Sign out". The free ID field and the Scenarios tab are hidden.
-
 **Production deployment:**
 
 1. Put the service behind single sign-on (an OIDC proxy or API gateway). The gateway verifies the user, drops any `X-Employee-Id` / `X-Employee-Signature` sent by the client, and sets them from the verified identity. Only the gateway can reach the service on the network.
@@ -132,7 +112,7 @@ What an impersonator can and cannot do in header mode: they can read what the cl
    - A weak secret stops the service at startup instead of running with false security.
    - The development UI is never served in signed mode.
    - `scripts/sign_identity.py` shows how a gateway produces the header, and `scripts/smoke.py` signs automatically when `IDENTITY_SECRET` is set.
-3. Keep `UI_ENABLED=false` in signed mode (it is forced off anyway). In login mode the UI is safe to enable, because it requires a sign-in.
+3. Keep `UI_ENABLED=false`. Signed mode forces the UI off anyway.
 
 Always on: `Cache-Control: no-store` on `/chat` (answers can contain personal data); `nosniff`, `X-Frame-Options: DENY` and `no-referrer` on every response; a Content-Security-Policy on the UI page; the interactive API docs (`/docs`, `/openapi.json`) are disabled; sessions stay bound to the employee who started them (403).
 
@@ -155,7 +135,7 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 258 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 233 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;

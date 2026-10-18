@@ -33,20 +33,6 @@ class Settings:
     ui_enabled: bool = False  # development chat page at /; off unless explicitly enabled
     identity_secret: str = ""  # set => X-Employee-Id must carry a valid HMAC signature
     identity_max_age_seconds: int = 300
-    auth_mode: str = ""  # header | signed | login; empty = signed if identity_secret else header
-    cookie_secure: bool = False  # set true when served over HTTPS
-    login_idle_minutes: int = 30
-    login_absolute_hours: int = 8
-    login_max_failures: int = 5
-    login_lockout_minutes: int = 15
-
-    def effective_auth_mode(self) -> str:
-        mode = (self.auth_mode or ("signed" if self.identity_secret else "header")).lower()
-        if mode not in ("header", "signed", "login"):
-            raise ValueError(f"AUTH_MODE must be header, signed or login, not {mode!r}")
-        if mode == "signed" and not self.identity_secret:
-            raise ValueError("AUTH_MODE=signed needs IDENTITY_SECRET")
-        return mode
 
     def today(self) -> date:
         """The service's notion of today (APP_TODAY, or the system date)."""
@@ -77,10 +63,4 @@ def load_settings() -> Settings:
         ui_enabled=_env("UI_ENABLED", "false").lower() in ("1", "true", "yes"),
         identity_secret=_env("IDENTITY_SECRET"),
         identity_max_age_seconds=int(_env("IDENTITY_MAX_AGE_SECONDS", "300")),
-        auth_mode=_env("AUTH_MODE"),
-        cookie_secure=_env("COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
-        login_idle_minutes=int(_env("LOGIN_IDLE_MINUTES", "30")),
-        login_absolute_hours=int(_env("LOGIN_ABSOLUTE_HOURS", "8")),
-        login_max_failures=int(_env("LOGIN_MAX_FAILURES", "5")),
-        login_lockout_minutes=int(_env("LOGIN_LOCKOUT_MINUTES", "15")),
     )

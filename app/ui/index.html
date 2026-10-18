@@ -131,21 +131,6 @@
   .composer .hint { text-align: center; }
   body.nodetails .meta, body.nodetails .tools, body.nodetails .raw { display: none; }
 
-  /* application-level login (AUTH_MODE=login) */
-  .who { display: none; }
-  body.login-mode .field.idfield, body.login-mode #tabScen { display: none; }
-  body.login-mode .tabs { grid-template-columns: 1fr; }
-  body.login-mode .who { display: block; }
-  .who .card-who { border: 1px solid var(--border); background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
-  .who b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .overlay { position: fixed; inset: 0; background: var(--bg); display: none; place-items: center; z-index: 10; padding: 16px; }
-  .overlay.show { display: grid; }
-  .signin { width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 26px; box-shadow: var(--shadow); }
-  .signin h1 { font-size: 19px; margin: 14px 0 4px; } .signin p { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
-  .signin .field { margin-bottom: 14px; }
-  .signin .btn { width: 100%; padding: 10px; }
-  .signin .err { color: var(--err); background: var(--err-soft); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-bottom: 12px; display: none; }
-
   /* scenarios */
   .cards { display: grid; gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
@@ -188,12 +173,7 @@
       <div><b>Veltrix PeopleOps</b><small>HR assistant</small></div>
     </div>
 
-    <div class="who"><div class="card-who">
-      <div style="font-size:12px;color:var(--muted)">Signed in as</div>
-      <div class="row"><b id="whoId" class="grow"></b><button class="btn" id="signOut" type="button">Sign out</button></div>
-    </div></div>
-
-    <div class="field idfield">
+    <div class="field">
       <label for="employee">Employee ID</label>
       <input id="employee" class="input mono" placeholder="e.g. E1234" autocomplete="off" spellcheck="false">
       <div class="recent" id="recent"></div>
@@ -218,20 +198,6 @@
       <div class="mono" id="sessionLabel" title="Current session ID"></div>
     </div>
   </aside>
-
-  <div class="overlay" id="loginOverlay">
-    <form class="signin" id="loginForm" autocomplete="on">
-      <div class="logo">V</div>
-      <h1>Sign in to Veltrix PeopleOps</h1>
-      <p>Use your employee ID and the password HR gave you.</p>
-      <div class="err" id="loginErr"></div>
-      <div class="field"><label for="loginId">Employee ID</label>
-        <input id="loginId" class="input mono" autocomplete="username" spellcheck="false" required></div>
-      <div class="field"><label for="loginPw">Password</label>
-        <input id="loginPw" class="input" type="password" autocomplete="current-password" required></div>
-      <button class="btn primary" id="loginBtn" type="submit">Sign in</button>
-    </form>
-  </div>
 
   <main>
     <!-- CHAT -->
@@ -324,47 +290,6 @@
     } catch (e) { $("hdot").className = "dot down"; $("htext").textContent = "Service offline"; setTimeout(health, 5000); }
   }
   health();
-
-  // ---------- application-level login ----------
-  let authMode = "header";
-  let signedInId = "";
-  function showLogin(message) {
-    $("loginOverlay").classList.add("show");
-    $("loginErr").style.display = message ? "block" : "none";
-    $("loginErr").textContent = message || "";
-    $("loginPw").value = "";
-    setTimeout(() => $("loginId").focus(), 0);
-  }
-  function signedIn(id) {
-    signedInId = id;
-    $("whoId").textContent = id;
-    $("loginOverlay").classList.remove("show");
-    newChat();
-  }
-  async function initAuth() {
-    try { authMode = (await (await fetch("/auth/config")).json()).mode || "header"; } catch (e) { return; }
-    if (authMode !== "login") return;
-    document.body.classList.add("login-mode");
-    switchTab("chat");
-    const me = await fetch("/auth/me");
-    if (me.ok) signedIn((await me.json()).employee_id); else showLogin();
-  }
-  $("loginForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("loginBtn").disabled = true;
-    try {
-      const r = await fetch("/auth/login", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ employee_id: $("loginId").value.trim(), password: $("loginPw").value }) });
-      const body = await r.json().catch(() => ({}));
-      if (r.ok) signedIn(body.employee_id);
-      else showLogin(body.detail || "Sign-in failed.");
-    } catch (err) { showLogin("Could not reach the service."); }
-    finally { $("loginBtn").disabled = false; }
-  });
-  $("signOut").onclick = async () => {
-    try { await fetch("/auth/logout", { method: "POST" }); } catch (e) {}
-    signedInId = ""; msgs.innerHTML = ""; showLogin();
-  };
 
   // ---------- API ----------
   async function callChat(employee, session, message) {
@@ -495,8 +420,7 @@
   }
 
   async function ask(text) {
-    const id = authMode === "login" ? signedInId : employee.value.trim();
-    if (authMode === "login" && !id) { showLogin(); return; }
+    const id = employee.value.trim();
     if (!id) { employee.focus(); addError("Enter an employee ID in the sidebar first."); return; }
     if (busy) return;
     busy = true; send.disabled = true;
@@ -506,7 +430,6 @@
       const { status, body, ms } = await callChat(id, session, text);
       typing.remove();
       if (status === 200 && body) { addBot(body, ms); remember(id); }
-      else if (status === 401 && authMode === "login") { addError("Your sign-in has expired. Please sign in again."); showLogin(); }
       else if (status === 401) addError("Unknown employee ID. Check the ID in the sidebar.");
       else if (status === 403) addError("This conversation belongs to another employee. Start a new conversation.");
       else if (status === 503) addError("The assistant is still loading documents. Try again in a moment.");
@@ -660,7 +583,6 @@
     $("runAll").disabled = false; $("stopRun").disabled = true;
   };
   $("stopRun").onclick = () => { stop = true; };
-  initAuth();
 })();
 </script>
 </body>
