@@ -21,7 +21,10 @@ curl -s localhost:8000/chat -H 'X-Employee-Id: <id>' -H 'Content-Type: applicati
 python scripts/smoke.py       # runs the sample queries below against a running service
 ```
 
-A minimal chat page is served at **http://localhost:8000/**. Enter an employee ID, then chat. It shows the route, citations and tool calls for each answer, and Yes/No buttons when a write is waiting for confirmation. It only calls `/chat` and `/health`.
+A chat UI is served at **http://localhost:8000/**. It only calls `/chat` and `/health`, so it gets no access the API doesn't already allow.
+
+- **Chat:** enter an employee ID in the sidebar (recent IDs are remembered). Each answer shows its route, the cited sources (`doc_id · locator`), tool-call cards with their arguments and status, the latency, and the raw JSON. Proposed bookings and cancellations get Confirm/Cancel buttons. There is a light/dark theme, and the details can be hidden.
+- **Scenarios:** enter IDs for a few personas (employee per region, a manager, HR, someone outside the manager's team), then run 28 end-to-end checks against the live service with pass/fail and the reason for each failure. They cover documents, tools, the write flow, access control, safety and the HTTP status codes. The checks are about behaviour (route, tool name and status, citation count), never about corpus values, so they also work on a modified corpus. Use the delay setting with a free-tier Gemini key.
 
 Local development without Docker (needs Python 3.10+; Tesseract is only needed for the scanned PDF, e.g. `winget install UB-Mannheim.TesseractOCR` on Windows):
 
@@ -105,13 +108,15 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 120 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 198 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
 - access control per role, for documents (restricted text never reaches the LLM and is never cited) and for leave data (the same refusal for missing and forbidden employees);
 - `apply_leave` and `cancel_leave`: every rejection reason, the transaction rollback, balance updates;
 - `POST /chat`: response shape, 400/401/403, every route, the propose → confirm flow, changed details, discarded proposals, no execution without confirmation;
+- orchestration: name lookup (ambiguous, out-of-team, own name), status filters, decline, only the latest proposal executing, re-validation on confirm, cancel disambiguation, LLM outages and fallbacks, determinism across 3 runs, no names in planner history, the token budget on a large corpus, the route contract;
+- chunking, locators, retrieval isolation over every subset of allowed documents, holiday formats, manifest validation, three-way conflicts, concurrent overlapping applies, extra date phrases, and Gemini adapter error handling (retry, thinking fallback, no retry on 429);
 - modified data: edited values (Markdown and PDF), renamed files with and without a manifest update, a file converted to another format, added and removed documents, a changed effective date and access level, a broken file, a changed holiday calendar, changed database rows, all while the service is running.
 
 ## Assumptions
