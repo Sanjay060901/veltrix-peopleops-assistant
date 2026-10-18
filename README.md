@@ -46,6 +46,7 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 | `EMBEDDING_PROVIDER` | `local` | `local` (fastembed, CPU) or `none` (BM25 only) |
 | `CORPUS_TOKEN_BUDGET` | `3000` | hard cap on corpus tokens per LLM call |
 | `LEAVE_YEAR` | `2026` | the only year leave can be requested for |
+| `CORPUS_RELOAD_SECONDS` | `30` | how often to check `./data` for changed files; `0` = ingest at startup only |
 
 ## Architecture
 
@@ -89,15 +90,29 @@ flowchart LR
 | Masking, log redaction | `app/privacy/` |
 | HTTP | `app/main.py`, `app/api/` |
 
+## Changing the data
+
+Nothing about the corpus is hard-coded. Everything is derived from `CORPUS_DIR` and `MANIFEST_PATH` at ingestion.
+
+- **Edit, add, remove or rename files in `data/` while the service runs.** Every `CORPUS_RELOAD_SECONDS`, the watcher compares a fingerprint (name, size and modification time of the manifest and every corpus file). If anything changed, it re-ingests in the background. The old index keeps answering until the new one is swapped in, so `/health` stays 200.
+- **Renaming a file:** update its `file` entry in `manifest.json`, since the manifest is the source of document metadata. If the manifest still names the old file, that document is skipped with a warning and everything else keeps working.
+- **Converting a file to another format** (for example `.md` to `.docx`) works the same way: point the manifest at the new file.
+- **A broken or unreadable file** is logged and skipped; the other documents still load.
+- **Manifest changes** (`effective_date`, `regions`, `access_level`) take effect on the next reload. For example, moving a document's date into the future turns it into an upcoming change, and tightening its access level hides it from employees and keeps it out of LLM prompts.
+- **The database** is read on every request, so new or changed employee, balance and request rows are used immediately.
+
+There is no upload endpoint. Updated documents are dropped into `data/corpus/`, with `data/manifest.json` updated to match. [tests/test_corpus_changes.py](tests/test_corpus_changes.py) covers each of these cases. One case was also checked live: an edited amount in a real corpus file was reflected in the answer without a restart.
+
 ## Tests
 
-Run `make test` (pytest): 103 tests, plus one OCR test that is skipped when Tesseract is not installed. The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 119 tests, plus one OCR test that is skipped when Tesseract is not installed. The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
 - access control per role, for documents (restricted text never reaches the LLM and is never cited) and for leave data (the same refusal for missing and forbidden employees);
 - `apply_leave` and `cancel_leave`: every rejection reason, the transaction rollback, balance updates;
-- `POST /chat`: response shape, 400/401/403, every route, the propose → confirm flow, changed details, discarded proposals, no execution without confirmation.
+- `POST /chat`: response shape, 400/401/403, every route, the propose → confirm flow, changed details, discarded proposals, no execution without confirmation;
+- modified data: edited values (Markdown and PDF), renamed files with and without a manifest update, a file converted to another format, added and removed documents, a changed effective date and access level, a broken file, a changed holiday calendar, changed database rows, all while the service is running.
 
 ## Assumptions
 
@@ -126,7 +141,7 @@ Run `make test` (pytest): 103 tests, plus one OCR test that is skipped when Tess
 - **Date phrases** the deterministic resolver doesn't know (for example "the week after Diwali") fall back to the LLM's reading.
 - **Future-balance arithmetic** is written by the LLM from the tool balance and the accrual rules. It is not computed in code.
 - **PDF headings** are detected from bold, larger fonts. A PDF whose headings use neither would be cited by page number.
-- **Ingestion runs on every start,** with no cache. Embedding the chunks dominates the time (about 50 s on the container CPU).
+- **Re-ingestion is full, not incremental.** Any change re-parses and re-embeds the whole corpus (about 60–75 s on the container CPU). During that time, answers still come from the previous version of the corpus.
 - **Single process:** the sessions and the write lock are per process.
 
 ## Sample queries

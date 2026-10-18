@@ -29,6 +29,7 @@ def settings(data_dir: Path) -> Settings:
         app_today=TODAY,
         embedding_provider="none",
         log_level="WARNING",
+        corpus_reload_seconds=0,  # tests trigger reloads explicitly
     )
 
 

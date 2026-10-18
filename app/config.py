@@ -28,6 +28,7 @@ class Settings:
     leave_year: int = 2026
     log_level: str = "INFO"
     history_turns: int = 6
+    corpus_reload_seconds: float = 30.0  # 0 disables watching for corpus changes
 
     def today(self) -> date:
         """The service's notion of today (APP_TODAY, or the system date)."""
@@ -53,4 +54,5 @@ def load_settings() -> Settings:
         leave_year=int(_env("LEAVE_YEAR", "2026")),
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         history_turns=int(_env("HISTORY_TURNS", "6")),
+        corpus_reload_seconds=float(_env("CORPUS_RELOAD_SECONDS", "30")),
     )

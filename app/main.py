@@ -19,6 +19,7 @@ from app.config import Settings, load_settings
 from app.data import repositories as repo
 from app.data.db import Database
 from app.ingestion.pipeline import ingest
+from app.ingestion.watcher import corpus_fingerprint
 from app.llm.base import LLMClient
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.sessions import SessionOwnershipError, SessionStore
@@ -39,23 +40,69 @@ class AppState:
     orchestrator: Orchestrator | None = None
     ready: threading.Event = field(default_factory=threading.Event)
     error: str | None = None
+    embedder: object | None = None
+    fingerprint: tuple = ()
+    reload_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def initialise(state: AppState, llm: LLMClient | None, embedder=None, load_embeddings: bool = True) -> None:
     """Load personal-data registry, ingest the corpus and build the orchestrator."""
     try:
-        with state.db.read() as conn:
-            registry.load((e.full_name, e.email, e.phone) for e in repo.all_employees(conn))
         if embedder is None and load_embeddings:
             embedder = load_embedder(
                 state.settings.embedding_provider, state.settings.embedding_model, state.settings.embedding_cache_dir
             )
-        corpus = ingest(state.settings.corpus_dir, state.settings.manifest_path, state.db, embedder)
-        state.orchestrator = Orchestrator(state.settings, state.db, corpus, llm)
+        state.embedder = embedder
+        state.orchestrator = Orchestrator(state.settings, state.db, _ingest(state), llm)
         state.ready.set()
     except Exception as exc:  # keep the process alive; /health stays 503 and the log says why
         state.error = type(exc).__name__
         log.exception("startup failed")
+
+
+def _ingest(state: AppState):
+    s = state.settings
+    state.fingerprint = corpus_fingerprint(s.corpus_dir, s.manifest_path)
+    with state.db.read() as conn:
+        registry.load((e.full_name, e.email, e.phone) for e in repo.all_employees(conn))
+    return ingest(s.corpus_dir, s.manifest_path, state.db, state.embedder)
+
+
+def reload_if_changed(state: AppState) -> bool:
+    """Re-ingest when the manifest or a corpus file was added, removed, renamed or edited.
+
+    The current corpus keeps serving requests until the new one is built, then it is swapped
+    in one assignment, so /health stays 200 and no request sees a half-built index."""
+    if state.orchestrator is None or not state.reload_lock.acquire(blocking=False):
+        return False
+    try:
+        s = state.settings
+        if corpus_fingerprint(s.corpus_dir, s.manifest_path) == state.fingerprint:
+            return False
+        log.info("corpus change detected, re-ingesting")
+        state.orchestrator.corpus = _ingest(state)
+        return True
+    except Exception:
+        log.exception("re-ingestion failed; keeping the previous corpus")
+        return False
+    finally:
+        state.reload_lock.release()
+
+
+def refresh_personal_data(state: AppState) -> None:
+    """Re-read names/emails/phones used for redaction, in case employee rows changed."""
+    try:
+        with state.db.read() as conn:
+            registry.load((e.full_name, e.email, e.phone) for e in repo.all_employees(conn))
+    except Exception:
+        log.exception("could not refresh personal-data registry")
+
+
+def _watch(state: AppState, stop: threading.Event) -> None:
+    interval = state.settings.corpus_reload_seconds
+    while not stop.wait(interval):
+        reload_if_changed(state)
+        refresh_personal_data(state)
 
 
 def create_app(
@@ -75,11 +122,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        stop = threading.Event()
         if background:
             threading.Thread(target=initialise, args=(state, llm, embedder), daemon=True, name="ingestion").start()
         else:
             initialise(state, llm, embedder, load_embeddings=embedder is not None)
+        if settings.corpus_reload_seconds > 0:
+            threading.Thread(target=_watch, args=(state, stop), daemon=True, name="corpus-watcher").start()
         yield
+        stop.set()
 
     app = FastAPI(title="Veltrix PeopleOps Assistant", lifespan=lifespan)
     app.state.veltrix = state
