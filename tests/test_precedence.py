@@ -103,6 +103,9 @@ def test_value_comparison():
     assert not values_equal("31 March", "30 June")
     assert values_equal("up to 2 days per week", "2 days a week")
     assert not values_equal("up to 2 days per week", "up to 3 days per week")
+    # paraphrased procedural statements agree; a one-sided negation does not
+    assert values_equal("according to the accrual schedule", "earned monthly per the accrual schedule")
+    assert not values_equal("deducted from balance", "not deducted from balance")
 
 
 def test_access_levels_per_role():

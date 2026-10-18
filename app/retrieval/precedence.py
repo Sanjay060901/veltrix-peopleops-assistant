@@ -109,10 +109,17 @@ def values_equal(a: str, b: str) -> bool:
         return all(
             {u for m, u in units_a if m == n} & {u for m, u in units_b if m == n} for n in nums_with_both
         )
-    if not words_a or not words_b:
-        return False
-    overlap = len(words_a & words_b) / len(words_a | words_b)
-    return overlap >= 0.6
+    # No numbers or dates on either side: these are procedural statements, which documents
+    # paraphrase freely. Only a negation on one side ("deducted" vs "not deducted") is treated
+    # as a different value; word-level differences are not.
+    return _negated(a) == _negated(b)
+
+
+_NEGATION = re.compile(r"\b(not|no|never|cannot|can't|isn't|aren't|doesn't|don't|without|none)\b", re.I)
+
+
+def _negated(value: str) -> bool:
+    return bool(_NEGATION.search(value))
 
 
 def all_agree(claims: list[Claim]) -> bool:

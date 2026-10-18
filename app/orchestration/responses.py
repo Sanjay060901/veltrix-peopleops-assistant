@@ -64,10 +64,15 @@ def requests_answer(target_id: str, requester: Employee, target_name: str | None
     return "\n".join(lines)
 
 
+def fmt_span(start: date, end: date) -> str:
+    return fmt_date(start) if start == end else f"{fmt_date(start)} to {fmt_date(end)}"
+
+
 def team_answer(entries: list[tuple[Employee, LeaveRequest]], start: date, end: date) -> str:
-    span = fmt_date(start) if start == end else f"{fmt_date(start)} to {fmt_date(end)}"
+    span = fmt_span(start, end)
     if not entries:
-        return f"None of your direct reports have pending or approved leave between {span}."
+        when = f"on {span}" if start == end else f"from {span}"
+        return f"None of your direct reports have pending or approved leave {when}."
     lines = [f"Pending or approved leave of your direct reports overlapping {span}:"]
     for emp, r in entries:
         lines.append(
@@ -104,7 +109,7 @@ def cancel_proposal(r: LeaveRequest) -> str:
 
 def cancel_done(r: LeaveRequest, new_balance: float) -> str:
     return (
-        f"Done. Your {r.leave_type} leave from {fmt_date(r.start_date)} to {fmt_date(r.end_date)} has been cancelled "
+        f"Done. Your {r.leave_type} leave for {fmt_span(r.start_date, r.end_date)} has been cancelled "
         f"and {fmt_days(r.working_days).replace('day', 'working day')} returned. Your {r.leave_type} balance is now {new_balance:g} days."
     )
 

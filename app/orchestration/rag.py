@@ -118,8 +118,8 @@ def retrieve_context(
 ) -> list[Chunk]:
     eligible = {d.doc_id for d in eligible_docs(corpus.docs.values(), role, region, reference_date)}
     upcoming = {d.doc_id for d in upcoming_docs(corpus.docs.values(), role, region, reference_date)} if include_upcoming else set()
-    hits = corpus.index.search(query, eligible, k=18, per_doc=2)
-    up_hits = corpus.index.search(query, upcoming, k=3, per_doc=2) if upcoming else []
+    hits = corpus.index.search(query, eligible, k=24)
+    up_hits = corpus.index.search(query, upcoming, k=3, per_doc_tokens=300) if upcoming else []
     main_budget = budget - (UPCOMING_RESERVE if up_hits else 0)
     packed = pack([h.chunk for h in hits], corpus.docs, main_budget, overhead_per_chunk=SOURCE_LABEL_TOKENS)
     packed_up = pack(

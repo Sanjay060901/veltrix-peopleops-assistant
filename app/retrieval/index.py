@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.ingestion.models import Chunk, DocMeta
+from app.llm.tokens import count_tokens
 from app.retrieval.embeddings import Embedder
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class CorpusIndex:
         self._tokens = [tokenize(self.search_text(c)) for c in chunks]
         self._tf = [Counter(t) for t in self._tokens]
         self._len = [len(t) for t in self._tokens]
+        self._chunk_tokens = [count_tokens(c.text) for c in chunks]
         self._avg = (sum(self._len) / len(self._len)) if chunks else 0.0
         df: Counter = Counter()
         for toks in self._tokens:
@@ -84,7 +86,10 @@ class CorpusIndex:
             score += self._idf.get(t, 0.0) * f * (k1 + 1) / denom
         return score
 
-    def search(self, query: str, allowed_doc_ids: set[str], k: int = 12, per_doc: int = 2) -> list[Hit]:
+    def search(self, query: str, allowed_doc_ids: set[str], k: int = 12, per_doc_tokens: int = 450) -> list[Hit]:
+        """Top-k chunks from the allowed documents. Each document may contribute at most
+        `per_doc_tokens` tokens, so competing documents all get a share of the context while a
+        document made of many small sections (a schedule, a calendar) is not cut short."""
         candidates = [i for i, c in enumerate(self.chunks) if c.doc_id in allowed_doc_ids]
         if not candidates or not query.strip():
             return []
@@ -107,12 +112,14 @@ class CorpusIndex:
                 fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank + 1)
         ordered = sorted(fused, key=lambda i: (-round(fused[i], 9), self.chunks[i].chunk_id))
         hits: list[Hit] = []
-        per_doc_count: Counter = Counter()
+        per_doc_used: Counter = Counter()
         for i in ordered:
             chunk = self.chunks[i]
-            if per_doc_count[chunk.doc_id] >= per_doc:
+            size = self._chunk_tokens[i]
+            # The best chunk of a document is always allowed, whatever its size.
+            if per_doc_used[chunk.doc_id] and per_doc_used[chunk.doc_id] + size > per_doc_tokens:
                 continue
-            per_doc_count[chunk.doc_id] += 1
+            per_doc_used[chunk.doc_id] += size
             hits.append(Hit(chunk, fused[i]))
             if len(hits) >= k:
                 break

@@ -118,7 +118,7 @@ Run `make test` (pytest): 103 tests, plus one OCR test that is skipped when Tess
 
 ## Known limitations
 
-- **Not yet run against the live Gemini API.** No API key was available during development. Everything the LLM does (intent classification, slot extraction, grouping claims into rules, answer wording) has been exercised only through the scripted fake. The adapter was checked against the real endpoint as far as an authentication error. Run `python scripts/smoke.py` with a key before relying on answer quality.
+- **Live validation is limited.** `scripts/smoke.py` was run end to end against live Gemini, using `gemini-3.5-flash-lite` because the free-tier key allowed only 20 requests a day on `gemini-3.6-flash`. All routes behaved as expected, and so did precedence, conflicts, upcoming changes and the accrual projection. The default model `gemini-3.6-flash` only had a few successful calls before the quota ran out. On the free tier, 429 or 5xx errors appear as "language service unavailable" answers (route `no_answer`).
 - **Precedence depends on rule grouping.** The code applies the §5 tests correctly, but it relies on the extraction call giving the same `rule_id` to claims about the same thing. If the LLM splits one rule into two, a stale FAQ value can appear as a separate fact.
 - **Value comparison is heuristic.** It compares numbers with their units, so "12 working days" equals "12 days" and "10 days" differs from "10 weeks". Unusual phrasings can cause a false conflict or a missed one.
 - **Date phrases** the deterministic resolver doesn't know (for example "the week after Diwali") fall back to the LLM's reading.
