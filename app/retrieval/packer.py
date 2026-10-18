@@ -19,13 +19,15 @@ class PackedContext:
         self.corpus_tokens += tokens
 
 
-def pack(chunks: list[Chunk], docs: dict[str, DocMeta], budget: int, start_tokens: int = 0) -> PackedContext:
+def pack(
+    chunks: list[Chunk], docs: dict[str, DocMeta], budget: int, start_tokens: int = 0, overhead_per_chunk: int = 0
+) -> PackedContext:
     """Greedy packing in retrieval order. A chunk that does not fit is skipped (a later, smaller
     one may still fit); the total never exceeds the budget."""
     ctx = PackedContext(corpus_tokens=start_tokens)
     for chunk in chunks:
         rendered = chunk.render(docs[chunk.doc_id].title)
-        tokens = count_tokens(rendered)
+        tokens = count_tokens(rendered) + overhead_per_chunk
         if ctx.corpus_tokens + tokens > budget:
             continue
         ctx.add(chunk, rendered, tokens)

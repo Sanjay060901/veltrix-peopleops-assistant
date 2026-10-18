@@ -12,7 +12,7 @@ from datetime import date
 
 from app.ingestion.models import ParsedDoc
 
-_MONTHS = {
+MONTHS = {
     m: i
     for i, names in enumerate(
         [
@@ -24,9 +24,9 @@ _MONTHS = {
     )
     for m in names
 }
-_MONTH_RE = "|".join(sorted(_MONTHS, key=len, reverse=True))
-_DMY = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({_MONTH_RE})\.?,?\s+(\d{{4}})\b", re.I)
-_MDY = re.compile(rf"\b({_MONTH_RE})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.I)
+MONTH_RE = "|".join(sorted(MONTHS, key=len, reverse=True))
+_DMY = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({MONTH_RE})\.?,?\s+(\d{{4}})\b", re.I)
+_MDY = re.compile(rf"\b({MONTH_RE})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.I)
 _ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _OPTIONAL_WORDS = re.compile(r"\b(restricted|optional|floating|elective)\b", re.I)
 
@@ -49,8 +49,8 @@ def parse_document_date(text: str) -> date | None:
             if order == "ymd":
                 return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
             if order == "dmy":
-                return date(int(m.group(3)), _MONTHS[m.group(2).lower()], int(m.group(1)))
-            return date(int(m.group(3)), _MONTHS[m.group(1).lower()], int(m.group(2)))
+                return date(int(m.group(3)), MONTHS[m.group(2).lower()], int(m.group(1)))
+            return date(int(m.group(3)), MONTHS[m.group(1).lower()], int(m.group(2)))
         except ValueError:
             return None
     return None
