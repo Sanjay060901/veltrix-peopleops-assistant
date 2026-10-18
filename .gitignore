@@ -1,0 +1,15 @@
+# Runtime data is mounted by the graders and must never be committed.
+data/
+
+# Assignment inputs that are not part of the submission.
+TASK.pdf
+project.md
+
+# Local environment
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+*.egg-info/
