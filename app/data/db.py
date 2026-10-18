@@ -21,6 +21,13 @@ ADDED_SCHEMA = [
         PRIMARY KEY (doc_id, holiday_date, name)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_credentials (
+        employee_id   TEXT PRIMARY KEY REFERENCES employees(employee_id),
+        password_hash TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_leave_requests_employee ON leave_requests(employee_id)",
     "CREATE INDEX IF NOT EXISTS idx_employees_manager ON employees(manager_id)",
 ]

@@ -42,7 +42,7 @@ Tool answers are templates, never LLM text.
 
 | Concern | File and function |
 |---|---|
-| Identity: 401 for a missing or unknown header (or, with `IDENTITY_SECRET`, a missing or invalid HMAC signature, checked before any DB lookup); 403 for another employee's session | `app/main.py: chat()`, `api/identity.py: verify()`, `orchestration/sessions.py: SessionStore.get_or_create()` |
+| Identity: 401 for a missing or unknown header (or, in `signed` mode, a missing or invalid HMAC signature checked before any DB lookup; in `login` mode, no valid sign-in session, or a header that differs from it); 403 for another employee's session | `app/main.py: chat()`, `_session_employee()`, `api/identity.py: verify()`, `auth/store.py`, `orchestration/sessions.py: SessionStore.get_or_create()` |
 | Documents | `retrieval/eligibility.py: can_read_doc()`, `eligible_docs()`; applied in `orchestration/rag.py: retrieve_context()` before `CorpusIndex.search(allowed_doc_ids)`, then re-asserted on the packed chunks |
 | Viewing leave | `tools/permissions.py: can_view_employee_leave()`, called inside `get_leave_balance()` and `list_leave_requests()` |
 | Team leave | `can_view_team_leave()` inside `get_team_leave()` |

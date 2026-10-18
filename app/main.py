@@ -14,7 +14,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from urllib.parse import urlparse
+
 from app.api import identity
+from app.auth import store as auth_store
 from app.api.schemas import ChatRequest, ChatResponse, Citation, ToolCall
 from app.config import Settings, load_settings
 from app.data import repositories as repo
@@ -32,6 +35,7 @@ from app.retrieval.embeddings import load_embedder
 log = logging.getLogger("app")
 
 UI_PATH = Path(__file__).parent / "ui" / "index.html"
+SESSION_COOKIE = "veltrix_session"
 
 
 @dataclass
@@ -118,11 +122,18 @@ def create_app(
     settings = settings or load_settings()
     setup_logging(settings.log_level)
     identity.check_secret(settings.identity_secret)
-    signed_mode = bool(settings.identity_secret)
-    # The UI lets a person type any employee ID, so it is never served when identities are signed.
+    auth_mode = settings.effective_auth_mode()
+    signed_mode = auth_mode == "signed"
+    login_mode = auth_mode == "login"
+    # In signed mode identities come from a gateway the browser UI cannot sign for, so it is
+    # never served. In login mode the UI shows a sign-in form instead of a free ID field.
     ui_enabled = settings.ui_enabled and not signed_mode
-    log.info("identity_mode=%s ui_enabled=%s", "signed" if signed_mode else "header", ui_enabled)
+    log.info("identity_mode=%s ui_enabled=%s", auth_mode, ui_enabled)
     state = AppState(settings=settings, db=Database(settings.db_path))
+    logins = auth_store.LoginSessions(settings.login_idle_minutes * 60, settings.login_absolute_hours * 3600)
+    throttle = auth_store.LoginThrottle(settings.login_max_failures, 15 * 60, settings.login_lockout_minutes * 60)
+    if login_mode:
+        state.db.ensure_schema()
     if llm is None and build_llm:
         from app.llm.gemini import build_llm as _build
 
@@ -149,7 +160,7 @@ def create_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if request.url.path == "/chat":
+        if request.url.path == "/chat" or request.url.path.startswith("/auth/"):
             response.headers["Cache-Control"] = "no-store"  # answers can contain personal data
         if request.url.path == "/":
             response.headers["Content-Security-Policy"] = (
@@ -165,6 +176,84 @@ def create_app(
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return FileResponse(UI_PATH, media_type="text/html")
 
+    # --- application-level login (AUTH_MODE=login) ---------------------------------------------
+
+    def _same_origin(request: Request) -> bool:
+        """Cookie-authenticated writes must come from this site (defence against CSRF on top of
+        SameSite=Strict). Browsers always send Origin on cross-site POSTs."""
+        origin = request.headers.get("origin")
+        return not origin or urlparse(origin).netloc == request.headers.get("host", "")
+
+    def _session_employee(request: Request) -> str | None:
+        token = request.cookies.get(SESSION_COOKIE)
+        session = logins.resolve(token)
+        if session is None:
+            return None
+        with state.db.read() as conn:
+            current = auth_store.credential_version(conn, session.employee_id)
+        if current != session.credential_version:  # password reset or removed since sign-in
+            logins.end(token)
+            return None
+        return session.employee_id
+
+    @app.get("/auth/config", include_in_schema=False)
+    def auth_config():
+        return {"mode": auth_mode}
+
+    @app.post("/auth/login", include_in_schema=False)
+    async def login(request: Request):
+        if not login_mode:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if not _same_origin(request):
+            return JSONResponse(status_code=403, content={"detail": "cross-site request refused"})
+        try:
+            payload = json.loads(await request.body() or b"null")
+            employee_id = str(payload["employee_id"]).strip().upper()[:64]
+            password = str(payload["password"])[:256]
+            if not employee_id or not password:
+                raise ValueError("empty")
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse(status_code=400, content={"detail": "employee_id and password are required"})
+        host = request.client.host if request.client else "unknown"
+        client_key, account_key = f"ip:{host}", f"id:{employee_id}"
+        if throttle.locked(account_key, client_key):
+            return JSONResponse(status_code=429, content={"detail": "Too many failed sign-in attempts. Try again later."})
+
+        def check() -> str | None:
+            with state.db.read() as conn:
+                if not auth_store.check_credentials(conn, employee_id, password):
+                    return None
+                return auth_store.credential_version(conn, employee_id)
+
+        version = await run_in_threadpool(check)  # scrypt is deliberately slow; keep the loop free
+        if version is None:
+            throttle.failure(account_key, client_key)
+            log.warning("failed sign-in attempt")
+            return JSONResponse(status_code=401, content={"detail": "Invalid employee ID or password."})
+        throttle.success(account_key, client_key)
+        token = logins.create(employee_id, version)
+        log.info("sign-in employee=%s", employee_id)
+        response = JSONResponse(content={"employee_id": employee_id})
+        response.set_cookie(
+            SESSION_COOKIE, token, max_age=settings.login_absolute_hours * 3600, httponly=True,
+            secure=settings.cookie_secure, samesite="strict", path="/",
+        )
+        return response
+
+    @app.post("/auth/logout", include_in_schema=False)
+    def logout(request: Request):
+        logins.end(request.cookies.get(SESSION_COOKIE))
+        response = JSONResponse(content={"signed_out": True})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    @app.get("/auth/me", include_in_schema=False)
+    def me(request: Request):
+        employee_id = _session_employee(request) if login_mode else None
+        if employee_id is None:
+            return JSONResponse(status_code=401, content={"detail": "not signed in"})
+        return {"employee_id": employee_id}
+
     @app.get("/health")
     def health():
         if state.ready.is_set():
@@ -174,6 +263,17 @@ def create_app(
     @app.post("/chat")
     async def chat(request: Request):
         employee_id = (request.headers.get("x-employee-id") or "").strip()
+        if login_mode:
+            # Identity comes only from the signed-in session; a typed header is never trusted.
+            if not _same_origin(request):
+                return JSONResponse(status_code=403, content={"detail": "cross-site request refused"})
+            session_employee = _session_employee(request)
+            if session_employee is None:
+                return JSONResponse(status_code=401, content={"detail": "sign in required"})
+            if employee_id and employee_id != session_employee:
+                log.warning("X-Employee-Id did not match the signed-in employee")
+                return JSONResponse(status_code=401, content={"detail": "X-Employee-Id does not match the signed-in user"})
+            employee_id = session_employee
         if not employee_id:
             return JSONResponse(status_code=401, content={"detail": "X-Employee-Id header is required"})
         if signed_mode and not identity.verify(
