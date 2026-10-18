@@ -11,29 +11,18 @@ Tool answers are templates, never LLM text.
 ## Ingestion: tables and the scanned document
 
 - **Format loaders** (`app/ingestion/loaders/`) turn each format into ordered blocks: heading, paragraph or table.
-- **PDF** (PyMuPDF):
-  - The body font size is the most common size in the document. A heading is a bold line at least 15% larger than that; the title is the largest line on page 1.
-  - Running headers and footers are dropped: small text in the page margins, or text repeated on every page.
-  - `find_tables()` returns tables as rows, and they are put back at their position on the page.
-- **DOCX:** the body is walked in XML order, so a table stays under its heading. Headings come from `w:pStyle`, because python-docx returns `None` styles for these files.
-- **HTML:** `nav`, `footer` and scripts are skipped.
-- **Markdown:** pipe tables are parsed into rows.
-- **Document-control tables** (Document ID, Version, …) are recognised by their field labels and dropped. The manifest is the source of those values.
+- **PDF** (PyMuPDF): headings are bold lines at least 15% larger than the body font; small margin text and lines repeated on every page are dropped; `find_tables()` rows are put back at their page position.
+- **DOCX:** the body is walked in XML order so tables stay under their heading; headings come from `w:pStyle`, since python-docx returns `None` styles here. **HTML** skips `nav` and `footer`; **Markdown** parses pipe tables.
+- **Document-control tables** (Document ID, Version, …) are dropped; the manifest holds those values.
 - **Scanned pages:** a PDF page with fewer than 40 characters of text is treated as scanned. It is rendered at 300 dpi and read with Tesseract. Lines are joined into paragraphs, and noise such as a scanned signature is filtered out. No file is special-cased: the memo is detected by having no text layer.
 - **Holiday calendars:** every table in a `calendar` document is scanned for a date column, the column where most cells parse as dates. Each row becomes a record `(doc_id, date, name, kind)` in the added table `holiday_calendar`. `kind` is `optional` when the table's heading or header row says restricted or optional; otherwise it is `closure`. This table feeds `apply_leave`. Calendar chunks are also indexed for questions.
 
 ## Chunking and retrieval
 
 - **One chunk per section** (a heading plus its body). Sections over 350 tokens are split at block boundaries, and long tables by rows with the header row repeated.
-- **Why sections:**
-  - HR documents state one rule per numbered section, so a section is the unit the precedence rules compare.
-  - The section heading is the citation locator the spec asks for.
-  - Documents without headings (the OCR memo) are chunked per page, and their locator is `p. N`.
+- **Why sections:** HR documents state one rule per numbered section, which is the unit precedence compares, and the heading is the citation locator. Documents without headings (the OCR memo) are chunked per page, cited as `p. N`.
 - **Retrieval** (`app/retrieval/index.py`) fuses BM25 with dense cosine similarity using reciprocal rank fusion.
-  - The dense vectors come from `bge-small-en-v1.5` (fastembed, CPU), held in a local in-memory index.
-  - BM25 catches exact terms ("carry forward", "Elternzeit"); the dense index catches paraphrases.
-  - At most 2 chunks are taken per document, so that competing versions all reach the precedence step instead of one document filling the context.
-  - Ties are broken by `chunk_id` for repeatable results.
+  Dense vectors come from `bge-small-en-v1.5` (fastembed, CPU) in a local in-memory index. BM25 catches exact terms ("Elternzeit"), dense catches paraphrases. At most 2 chunks per document, so competing versions all reach precedence; ties break on `chunk_id`.
 - **Packing:** `retrieval/packer.py:pack()` is the single place corpus tokens are counted (tiktoken `cl100k_base`), including the `[S#]` source labels. 600 tokens are reserved for not-yet-effective documents.
 - **Budget guard:** `LLMClient.generate_json()` refuses any call over 3,000 corpus tokens, and logs `corpus_tokens=` for every call.
 
@@ -76,16 +65,7 @@ Every check takes the `Employee` loaded from the header; nothing the LLM outputs
 
 ## Failure modes found
 
-**Fixed:**
-- python-docx `None` styles;
-- DOCX tables losing their position under the heading;
-- merged PDF metadata rows leaking into chunks;
-- restricted holidays reducing working days;
-- the wiki's "Note for the AI assistant" (dropped at ingestion, and sources are framed as untrusted);
-- v2's change table attributing v1 values to v2 (`describes_other_version`);
-- an addendum that defers to another document winning on scope with no value (`defers_to_other_document`);
-- source labels not being counted toward the 3,000-token cap;
-- retries that could push a request past 30 s (a retry is now allowed only within 3 s of the first attempt).
+**Fixed:** python-docx `None` styles; DOCX tables losing their position; merged PDF metadata rows leaking into chunks; restricted holidays reducing working days; the wiki's "Note for the AI assistant" (dropped at ingestion, sources framed as untrusted); v2's change table attributing v1 values to v2; an addendum that defers to another document winning on scope with no value; source labels not counted toward the 3,000-token cap; retries that could push a request past 30 s.
 
 **Open:** see Known limitations in the README. The main ones are claim grouping by the LLM and the lack of live-model validation.
 
