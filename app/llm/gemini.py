@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from app.llm.base import LLMClient, LLMError
 
 log = logging.getLogger(__name__)
+
+RETRY_WINDOW_SECONDS = 3.0
 
 
 class GeminiClient(LLMClient):
@@ -46,14 +49,17 @@ class GeminiClient(LLMClient):
     def _generate_json(self, *, system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
         from google.genai import errors
 
+        started = time.monotonic()
         last_exc: Exception | None = None
-        for attempt in range(2):
+        for _attempt in range(2):
             try:
                 response = self._client.models.generate_content(
                     model=self._model, contents=user, config=self._config(system, schema)
                 )
-                text = response.text or ""
-                return json.loads(text)
+                data = json.loads(response.text or "")
+                if not isinstance(data, dict):
+                    raise ValueError("expected a JSON object")
+                return data
             except errors.ClientError as exc:
                 if self._use_thinking_config and "thinking" in str(exc).lower():
                     log.info("model does not accept thinking_level, retrying without it")
@@ -61,9 +67,11 @@ class GeminiClient(LLMClient):
                     last_exc = exc
                     continue
                 raise LLMError(f"gemini client error {getattr(exc, 'code', '')}") from exc
-            except (errors.ServerError, json.JSONDecodeError) as exc:
+            except Exception as exc:  # server errors, timeouts, malformed JSON
                 last_exc = exc
-                continue
+                # Retry only if the failure was quick; every request must finish within 30 s.
+                if time.monotonic() - started > RETRY_WINDOW_SECONDS:
+                    break
         raise LLMError("gemini call failed") from last_exc
 
 

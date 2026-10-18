@@ -1,0 +1,30 @@
+services:
+  assistant:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Graders replace ./data with their own corpus, manifest and database.
+      - ./data:/app/data
+    environment:
+      CORPUS_DIR: ${CORPUS_DIR:-./data/corpus}
+      MANIFEST_PATH: ${MANIFEST_PATH:-./data/manifest.json}
+      DB_PATH: ${DB_PATH:-./data/veltrix.db}
+      APP_TODAY: ${APP_TODAY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-8}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      CORPUS_TOKEN_BUDGET: ${CORPUS_TOKEN_BUDGET:-3000}
+      LEAVE_YEAR: ${LEAVE_YEAR:-2026}
+      HISTORY_TURNS: ${HISTORY_TURNS:-6}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HF_HUB_OFFLINE: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
