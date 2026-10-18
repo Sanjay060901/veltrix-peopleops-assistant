@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -27,6 +28,8 @@ log = logging.getLogger(__name__)
 
 UPCOMING_RESERVE = 600  # corpus tokens kept for not-yet-effective documents
 SOURCE_LABEL_TOKENS = 6  # "[S12] " prefix added to each block, counted as corpus text
+# If retrieval + extraction took this long, skip the compose call so the request stays under 30 s.
+COMPOSE_DEADLINE_SECONDS = 15.0
 
 EXTRACT_SCHEMA = {
     "type": "object",
@@ -67,7 +70,7 @@ You receive a question and numbered sources [S1], [S2], ... Each source is an ex
 Task:
 1. Decide which rules (distinct things the question asks about, such as an allowance, a limit, a deadline, a procedure, a list of dates) the sources address. Give each rule a short rule_id (R1, R2, ...) and a description.
 2. For EVERY source that states something relevant to a rule, add a claim, even if sources disagree, look outdated, or come from an FAQ or wiki. Do not decide which source is right and do not merge sources: one claim per source per rule.
-3. Use the same rule_id only when sources state a value for exactly the same thing for the same group of people. Different groups or conditions (for example maternity leave for birth mothers vs parental leave for primary caregivers) are different rules.
+3. All sources were already selected as applying to this employee (their office region is given below the question). Give claims the same rule_id when they set a value for the same thing, even if one source states it for all employees and another only for the employee's office or region (for example a global work-from-home limit and an office-specific work-from-home limit are the same rule). Use different rule_ids only for different groups of people or conditions (for example maternity leave for birth mothers vs parental leave for secondary caregivers).
 4. value: the minimal canonical value (for example "12 working days", "31 March", "up to 3 days per week", "not deducted"). statement: one faithful sentence of what that source says, including conditions, effective dates and who it applies to. Copy dates and numbers exactly.
 5. defers_to_other_document = true when the source does not state its own value but refers to another document (for example "the deadline in the Global Leave Policy").
 6. describes_other_version = true when the value is explicitly attributed to a different version or an earlier/later regime than the source's own rule (for example a "Version 1" column in a comparison table).
@@ -128,14 +131,16 @@ def retrieve_context(
     return [c for c in chunks if c.doc_id in allowed]
 
 
-def extract_claims(llm: LLMClient, question: str, chunks: list[Chunk], docs: dict[str, DocMeta]) -> tuple[list[Claim], str, str]:
+def extract_claims(
+    llm: LLMClient, question: str, chunks: list[Chunk], docs: dict[str, DocMeta], region: str = ""
+) -> tuple[list[Claim], str, str]:
     blocks, labels = _source_blocks(chunks, docs)
     # Every source block, label included, is counted as corpus text.
     tokens = sum(count_tokens(b) for b in blocks)
     data = llm.generate_json(
         purpose="extract",
         system=EXTRACT_SYSTEM,
-        user=f"Question: {question}\n\nSources:\n\n" + "\n\n".join(blocks),
+        user=f"Question: {question}\nEmployee office region: {region or 'unknown'}\n\nSources:\n\n" + "\n\n".join(blocks),
         schema=EXTRACT_SCHEMA,
         corpus_tokens=tokens,
     )
@@ -190,11 +195,12 @@ def answer_from_documents(
     tool_lines: list[str],
     budget: int,
 ) -> RagResult:
+    started = time.monotonic()
     include_upcoming = reference_date >= today
     chunks = retrieve_context(corpus, search_query or question, role, region, reference_date, include_upcoming, budget)
     if not chunks:
         return RagResult("none")
-    claims, coverage, uncovered = extract_claims(llm, question, chunks, corpus.docs)
+    claims, coverage, uncovered = extract_claims(llm, question, chunks, corpus.docs, region)
     resolutions = resolve(claims, reference_date, include_upcoming=include_upcoming)
     resolutions = [r for r in resolutions if r.winners or r.upcoming]
     if not resolutions:
@@ -208,13 +214,16 @@ def answer_from_documents(
         + ["", "Document facts:", *lines]
         + (["", f"Not covered by the documents: {uncovered}"] if uncovered and coverage != "full" else [])
     )
-    try:
-        data = llm.generate_json(purpose="compose", system=COMPOSE_SYSTEM, user=user, schema=COMPOSE_SCHEMA, corpus_tokens=fact_tokens)
-        answer = str(data.get("answer", "")).strip()
-        used = [f for f in data.get("used_fact_ids", []) if f in facts]
-    except LLMError:
-        log.warning("compose failed, using extracted statements directly")
-        answer, used = "", []
+    answer, used = "", []
+    if time.monotonic() - started > COMPOSE_DEADLINE_SECONDS:
+        log.warning("skipping compose to stay within the request time limit")
+    else:
+        try:
+            data = llm.generate_json(purpose="compose", system=COMPOSE_SYSTEM, user=user, schema=COMPOSE_SCHEMA, corpus_tokens=fact_tokens)
+            answer = str(data.get("answer", "")).strip()
+            used = [f for f in data.get("used_fact_ids", []) if f in facts]
+        except LLMError:
+            log.warning("compose failed, using extracted statements directly")
     if not answer:
         answer = " ".join(facts[f].statement for f in facts)
         used = list(facts)

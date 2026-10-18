@@ -20,7 +20,7 @@ class Settings:
     llm_provider: str = "gemini"
     google_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
-    llm_timeout_seconds: float = 8.0
+    llm_timeout_seconds: float = 10.0
     embedding_provider: str = "local"  # local | none
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_cache_dir: str = ""
@@ -45,7 +45,7 @@ def load_settings() -> Settings:
         llm_provider=_env("LLM_PROVIDER", "gemini").lower(),
         google_api_key=_env("GOOGLE_API_KEY", _env("GEMINI_API_KEY")),
         gemini_model=_env("GEMINI_MODEL", "gemini-3.6-flash"),
-        llm_timeout_seconds=float(_env("LLM_TIMEOUT_SECONDS", "8")),
+        llm_timeout_seconds=float(_env("LLM_TIMEOUT_SECONDS", "10")),
         embedding_provider=_env("EMBEDDING_PROVIDER", "local").lower(),
         embedding_model=_env("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
         embedding_cache_dir=_env("EMBEDDING_CACHE_DIR"),

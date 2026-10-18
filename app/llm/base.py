@@ -39,7 +39,7 @@ class LLMClient(ABC):
         except Exception as exc:
             log.warning(
                 "llm_call purpose=%s provider=%s corpus_tokens=%s seconds=%.2f status=error error=%s",
-                purpose, self.name, corpus_tokens, time.monotonic() - started, type(exc).__name__,
+                purpose, self.name, corpus_tokens, time.monotonic() - started, exc,
             )
             raise
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import time
 import urllib.request
 import uuid
 
@@ -43,6 +44,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--db", default="./data/veltrix.db")
+    ap.add_argument("--delay", type=float, default=0.0, help="seconds between messages (free-tier rate limits)")
     args = ap.parse_args()
     p = pick(args.db)
     scenarios: list[tuple[str, list[str]]] = [
@@ -70,6 +72,7 @@ def main() -> None:
         session = str(uuid.uuid4())
         for message in messages:
             body = chat(args.url, employee, session, message)
+            time.sleep(args.delay)
             print(f"\n[{employee}] {message}\n  route={body['route']} pending={body['pending_confirmation']}")
             print(f"  citations={[(c['doc_id'], c['locator']) for c in body['citations']]}")
             print(f"  tool_calls={body['tool_calls']}")

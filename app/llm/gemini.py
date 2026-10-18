@@ -11,6 +11,7 @@ from app.llm.base import LLMClient, LLMError
 log = logging.getLogger(__name__)
 
 RETRY_WINDOW_SECONDS = 3.0
+MIN_TIMEOUT_SECONDS = 10.0
 
 
 class GeminiClient(LLMClient):
@@ -25,7 +26,8 @@ class GeminiClient(LLMClient):
         self._genai = genai
         self._client = genai.Client(api_key=api_key)
         self._model = model
-        self._timeout_ms = int(timeout_seconds * 1000)
+        # The API rejects deadlines below 10 s.
+        self._timeout_ms = int(max(timeout_seconds, MIN_TIMEOUT_SECONDS) * 1000)
         self._use_thinking_config = True
 
     def _config(self, system: str, schema: dict[str, Any]):
@@ -66,13 +68,13 @@ class GeminiClient(LLMClient):
                     self._use_thinking_config = False
                     last_exc = exc
                     continue
-                raise LLMError(f"gemini client error {getattr(exc, 'code', '')}") from exc
+                raise LLMError(f"gemini client error {getattr(exc, 'code', '')} {getattr(exc, 'status', '')}") from exc
             except Exception as exc:  # server errors, timeouts, malformed JSON
                 last_exc = exc
                 # Retry only if the failure was quick; every request must finish within 30 s.
                 if time.monotonic() - started > RETRY_WINDOW_SECONDS:
                     break
-        raise LLMError("gemini call failed") from last_exc
+        raise LLMError(f"gemini call failed: {type(last_exc).__name__}") from last_exc
 
 
 def build_llm(settings) -> LLMClient | None:

@@ -40,7 +40,7 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 | `APP_TODAY` | system date | today, `YYYY-MM-DD` |
 | `LLM_PROVIDER` / `GOOGLE_API_KEY` | `gemini` / – | Gemini is the supported provider |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | any Gemini model that supports JSON-schema output |
-| `LLM_TIMEOUT_SECONDS` | `8` | per call; one request makes at most 3 calls |
+| `LLM_TIMEOUT_SECONDS` | `10` | per call (Gemini's minimum); one request makes at most 3 calls |
 | `EMBEDDING_PROVIDER` | `local` | `local` (fastembed, CPU) or `none` (BM25 only) |
 | `CORPUS_TOKEN_BUDGET` | `3000` | hard cap on corpus tokens per LLM call |
 | `LEAVE_YEAR` | `2026` | the only year leave can be requested for |
