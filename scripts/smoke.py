@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
+import sys
 import time
 import urllib.request
 import uuid
@@ -31,10 +33,15 @@ def pick(db: str) -> dict[str, str]:
 
 
 def chat(url: str, employee: str, session: str, message: str) -> dict:
+    headers = {"X-Employee-Id": employee, "Content-Type": "application/json"}
+    secret = os.environ.get("IDENTITY_SECRET", "")
+    if secret:  # signed mode: act as the login gateway would
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from app.api.identity import sign
+
+        headers["X-Employee-Signature"] = sign(secret, employee)
     req = urllib.request.Request(
-        f"{url}/chat",
-        data=json.dumps({"session_id": session, "message": message}).encode(),
-        headers={"X-Employee-Id": employee, "Content-Type": "application/json"},
+        f"{url}/chat", data=json.dumps({"session_id": session, "message": message}).encode(), headers=headers
     )
     with urllib.request.urlopen(req, timeout=40) as resp:
         return json.loads(resp.read())

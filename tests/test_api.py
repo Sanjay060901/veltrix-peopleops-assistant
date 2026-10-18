@@ -34,8 +34,15 @@ def test_health_ok_after_ingestion(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_ui_page_is_served(client):
-    response = client.get("/")
+def test_ui_page_is_off_by_default(client):
+    assert client.get("/").status_code == 404
+
+
+def test_ui_page_is_served_when_enabled(settings):
+    from dataclasses import replace
+
+    with make_client(replace(settings, ui_enabled=True), FakeLLM()) as c:
+        response = c.get("/")
     assert response.status_code == 200 and "X-Employee-Id" in response.text
 
 

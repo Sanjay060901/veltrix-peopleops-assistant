@@ -21,7 +21,7 @@ curl -s localhost:8000/chat -H 'X-Employee-Id: <id>' -H 'Content-Type: applicati
 python scripts/smoke.py       # runs the sample queries below against a running service
 ```
 
-A chat UI is served at **http://localhost:8000/**. It only calls `/chat` and `/health`, so it gets no access the API doesn't already allow.
+A development chat UI is served at **http://localhost:8000/** when `UI_ENABLED=true`. It is off by default, because it lets you type any employee ID; see [Security](#security). It only calls `/chat` and `/health`, so it gets no access the API doesn't already allow.
 
 - **Chat:** enter an employee ID in the sidebar (recent IDs are remembered). Each answer shows its route, the cited sources (`doc_id · locator`), tool-call cards with their arguments and status, the latency, and the raw JSON. Proposed bookings and cancellations get Confirm/Cancel buttons. There is a light/dark theme, and the details can be hidden.
 - **Scenarios:** enter IDs for a few personas (employee per region, a manager, HR, someone outside the manager's team), then run 28 end-to-end checks against the live service with pass/fail and the reason for each failure. They cover documents, tools, the write flow, access control, safety and the HTTP status codes. The checks are about behaviour (route, tool name and status, citation count), never about corpus values, so they also work on a modified corpus. Use the delay setting with a free-tier Gemini key.
@@ -50,6 +50,9 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 | `CORPUS_TOKEN_BUDGET` | `3000` | hard cap on corpus tokens per LLM call |
 | `LEAVE_YEAR` | `2026` | the only year leave can be requested for |
 | `CORPUS_RELOAD_SECONDS` | `30` | how often to check `./data` for changed files; `0` = ingest at startup only |
+| `UI_ENABLED` | `false` | serve the development chat page at `/` |
+| `IDENTITY_SECRET` | – | production: require a gateway-signed `X-Employee-Signature` (≥ 32 chars); see Security |
+| `IDENTITY_MAX_AGE_SECONDS` | `300` | how long a signature stays valid |
 | `CACHE_DIR` | `./.cache/ingest` | ingestion cache keyed by file SHA-256 (a Docker volume in Compose); empty disables it |
 
 ## Architecture
@@ -94,6 +97,27 @@ flowchart LR
 | Masking, log redaction | `app/privacy/` |
 | HTTP | `app/main.py`, `app/api/` |
 
+## Security
+
+**Who is asking.** The assignment treats `X-Employee-Id` as already authenticated: login is out of scope, and the automated tests send the header directly. By default (**header mode**) the service therefore trusts it. That is only safe when nobody but a trusted login layer can reach the service. Anyone who can call the API directly, or use the development UI, can claim any employee ID.
+
+What an impersonator can and cannot do in header mode: they can read what the claimed employee may read, and book or cancel *that employee's* leave. They **cannot approve leave** (there is no approval feature), act on someone else's leave, read HR-only documents as a non-HR user, or pull bulk data.
+
+**Production deployment:**
+
+1. Put the service behind single sign-on (an OIDC proxy or API gateway). The gateway verifies the user, drops any `X-Employee-Id` / `X-Employee-Signature` sent by the client, and sets them from the verified identity. Only the gateway can reach the service on the network.
+2. Set `IDENTITY_SECRET` (≥ 32 random characters, shared only with the gateway) to turn on **signed mode**. Every request must then carry `X-Employee-Signature: t=<unix time>,v1=<HMAC-SHA256(secret, "<employee_id>.<t>")>`.
+   - A missing, wrong, expired (older than `IDENTITY_MAX_AGE_SECONDS`) or borrowed signature, for example an employee's own signature reused with a manager's ID, gets **401**.
+   - The check runs before any database lookup, so unsigned callers cannot probe which IDs exist.
+   - A weak secret stops the service at startup instead of running with false security.
+   - The development UI is never served in signed mode.
+   - `scripts/sign_identity.py` shows how a gateway produces the header, and `scripts/smoke.py` signs automatically when `IDENTITY_SECRET` is set.
+3. Keep `UI_ENABLED=false`. Signed mode forces the UI off anyway.
+
+Always on: `Cache-Control: no-store` on `/chat` (answers can contain personal data); `nosniff`, `X-Frame-Options: DENY` and `no-referrer` on every response; a Content-Security-Policy on the UI page; the interactive API docs (`/docs`, `/openapi.json`) are disabled; sessions stay bound to the employee who started them (403).
+
+On a laptop you can also publish the port as `127.0.0.1:8000:8000` in `docker-compose.yml`, so other machines on the network cannot reach the service. The default stays `8000:8000` so that an external test harness can reach it.
+
 ## Changing the data
 
 Nothing about the corpus is hard-coded. Everything is derived from `CORPUS_DIR` and `MANIFEST_PATH` at ingestion.
@@ -111,7 +135,7 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 213 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 233 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
@@ -139,6 +163,7 @@ Run `make test` (pytest): 213 tests. The real-OCR test is skipped if Tesseract i
 13. **Greetings and small talk** get a short capability message with route `clarify`.
 14. **`POST /chat` returns 503** until ingestion has finished, the same as `/health`.
 15. **Sessions are in memory.** A restart starts new conversations.
+17. **Identity:** by default `X-Employee-Id` is trusted as set by an upstream login layer, as the spec states. Signed mode (`IDENTITY_SECRET`) is the hardened option for production; it is off by default so the plain-header contract the graders test keeps working.
 16. **Leave types other than annual or sick** (for example "parental") return a `tool` response with status `error` that explains only annual or sick leave can be applied for.
 
 ## Known limitations

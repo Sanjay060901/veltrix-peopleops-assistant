@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from app.api import identity
 from app.api.schemas import ChatRequest, ChatResponse, Citation, ToolCall
 from app.config import Settings, load_settings
 from app.data import repositories as repo
@@ -116,6 +117,11 @@ def create_app(
 ) -> FastAPI:
     settings = settings or load_settings()
     setup_logging(settings.log_level)
+    identity.check_secret(settings.identity_secret)
+    signed_mode = bool(settings.identity_secret)
+    # The UI lets a person type any employee ID, so it is never served when identities are signed.
+    ui_enabled = settings.ui_enabled and not signed_mode
+    log.info("identity_mode=%s ui_enabled=%s", "signed" if signed_mode else "header", ui_enabled)
     state = AppState(settings=settings, db=Database(settings.db_path))
     if llm is None and build_llm:
         from app.llm.gemini import build_llm as _build
@@ -134,12 +140,29 @@ def create_app(
         yield
         stop.set()
 
-    app = FastAPI(title="Veltrix PeopleOps Assistant", lifespan=lifespan)
+    app = FastAPI(title="Veltrix PeopleOps Assistant", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.veltrix = state
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path == "/chat":
+            response.headers["Cache-Control"] = "no-store"  # answers can contain personal data
+        if request.url.path == "/":
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            )
+        return response
 
     @app.get("/", include_in_schema=False)
     def ui():
-        """Optional minimal chat page; it only calls the public /chat and /health endpoints."""
+        """Development chat page (UI_ENABLED=true). It only calls /chat and /health."""
+        if not ui_enabled:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return FileResponse(UI_PATH, media_type="text/html")
 
     @app.get("/health")
@@ -153,6 +176,12 @@ def create_app(
         employee_id = (request.headers.get("x-employee-id") or "").strip()
         if not employee_id:
             return JSONResponse(status_code=401, content={"detail": "X-Employee-Id header is required"})
+        if signed_mode and not identity.verify(
+            settings.identity_secret, employee_id, request.headers.get("x-employee-signature"), settings.identity_max_age_seconds
+        ):
+            # Checked before any database lookup, so unsigned callers cannot probe which IDs exist.
+            log.warning("rejected request with missing or invalid identity signature")
+            return JSONResponse(status_code=401, content={"detail": "identity could not be verified"})
         if not state.ready.is_set() or state.orchestrator is None:
             return JSONResponse(status_code=503, content={"detail": "service is starting"})
         with state.db.read() as conn:
