@@ -1,5 +1,5 @@
 # Runtime data is mounted by the graders and must never be committed.
-data/
+/data/
 
 # Assignment inputs that are not part of the submission.
 TASK.pdf
