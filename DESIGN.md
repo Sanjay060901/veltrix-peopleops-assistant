@@ -22,7 +22,7 @@ Tool answers are templates, never LLM text.
 - **One chunk per section** (a heading plus its body). Sections over 350 tokens are split at block boundaries, and long tables by rows with the header row repeated.
 - **Why sections:** HR documents state one rule per numbered section, which is the unit precedence compares, and the heading is the citation locator. Documents without headings (the OCR memo) are chunked per page, cited as `p. N`.
 - **Retrieval** (`app/retrieval/index.py`) fuses BM25 with dense cosine similarity using reciprocal rank fusion.
-  Dense vectors come from `bge-small-en-v1.5` (fastembed, CPU) in a local in-memory index. BM25 catches exact terms ("Elternzeit"), dense catches paraphrases. At most 2 chunks per document, so competing versions all reach precedence; ties break on `chunk_id`.
+  Dense vectors come from `bge-small-en-v1.5` (fastembed, CPU) in a local in-memory index. BM25 catches exact terms ("Elternzeit"), dense catches paraphrases. Each document may contribute at most 450 tokens, so competing versions all reach precedence while a schedule made of many small sections is not cut short; ties break on `chunk_id`.
 - **Packing:** `retrieval/packer.py:pack()` is the single place corpus tokens are counted (tiktoken `cl100k_base`), including the `[S#]` source labels. 600 tokens are reserved for not-yet-effective documents.
 - **Budget guard:** `LLMClient.generate_json()` refuses any call over 3,000 corpus tokens, and logs `corpus_tokens=` for every call.
 
