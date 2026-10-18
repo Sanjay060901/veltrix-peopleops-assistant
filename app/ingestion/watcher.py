@@ -1,24 +1,23 @@
-"""Detects changes to the manifest or corpus files so the service can re-ingest without a restart.
+"""Detects content changes to the manifest or corpus files so the service can re-ingest.
 
-A fingerprint of (name, size, mtime) for the manifest and every corpus file is compared on a
-timer. Added, removed, renamed or edited files all change the fingerprint.
+The fingerprint is the SHA-256 of every file's bytes. Files whose size and modification time
+are unchanged are not re-read (the hash is memoised on those), so the periodic check is cheap.
+A file that is only touched, or copied over with identical bytes, does not trigger a reload.
+Added, removed, renamed or edited files do.
 """
 from __future__ import annotations
 
-import logging
-import os
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from app.ingestion.cache import file_sha256
 
 
 def corpus_fingerprint(corpus_dir: str, manifest_path: str) -> tuple:
-    entries: list[tuple[str, int, int]] = []
+    entries: list[tuple[str, str]] = []
     for path in [Path(manifest_path)] + sorted(Path(corpus_dir).glob("*")):
         try:
             if path.is_file():
-                st = os.stat(path)
-                entries.append((path.name, st.st_size, st.st_mtime_ns))
+                entries.append((path.name, file_sha256(path)))
         except OSError:
-            entries.append((path.name, -1, -1))
+            entries.append((path.name, "unreadable"))
     return tuple(entries)

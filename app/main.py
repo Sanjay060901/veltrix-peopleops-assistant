@@ -18,6 +18,7 @@ from app.api.schemas import ChatRequest, ChatResponse, Citation, ToolCall
 from app.config import Settings, load_settings
 from app.data import repositories as repo
 from app.data.db import Database
+from app.ingestion.cache import IngestCache
 from app.ingestion.pipeline import ingest
 from app.ingestion.watcher import corpus_fingerprint
 from app.llm.base import LLMClient
@@ -65,7 +66,8 @@ def _ingest(state: AppState):
     state.fingerprint = corpus_fingerprint(s.corpus_dir, s.manifest_path)
     with state.db.read() as conn:
         registry.load((e.full_name, e.email, e.phone) for e in repo.all_employees(conn))
-    return ingest(s.corpus_dir, s.manifest_path, state.db, state.embedder)
+    cache = IngestCache(s.cache_dir) if s.cache_dir else None
+    return ingest(s.corpus_dir, s.manifest_path, state.db, state.embedder, cache=cache, embedding_model=s.embedding_model)
 
 
 def reload_if_changed(state: AppState) -> bool:

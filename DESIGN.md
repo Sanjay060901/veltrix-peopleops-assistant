@@ -71,7 +71,7 @@ Every check takes the `Employee` loaded from the header; nothing the LLM outputs
 
 ## At 10,000 documents
 
-1. **Startup breaks first.** Re-parsing, running OCR and embedding everything on each start takes about 50 s for 145 chunks. At 10,000 documents that would exceed the 10-minute health window. Fix: an incremental ingestion cache keyed by file hash, plus a persistent vector store (FAISS on disk, or Qdrant in Compose).
+1. **The first ingestion breaks first.** Processing everything takes about 65 s for 145 chunks, so a cold start at 10,000 documents would exceed the 10-minute health window. Restarts and edits already reuse a cache keyed by SHA-256 (`ingestion/cache.py`). Next steps: report healthy as soon as a first slice of documents is indexed, parallelise parsing and OCR, and move the vectors into a persistent ANN store (FAISS on disk, or Qdrant in Compose).
 2. **Query cost.** BM25 scoring in a Python loop is linear in the number of chunks. Fix: an inverted index, and an approximate-nearest-neighbour index with metadata filters (role, region, date) applied inside the index.
 3. **Context.** Within 3,000 tokens, dozens of versions of one policy would crowd each other out. Fix: group documents into version families at ingestion, keep the latest effective version per family and scope before retrieval, and keep only regional overrides and same-tier peers as competitors.
 4. **Claim grouping.** Extraction quality falls as the number of sources grows. Fix: run extraction per document family in parallel calls, and normalise rule keys against a rule catalogue built at ingestion.

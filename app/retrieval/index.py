@@ -49,7 +49,15 @@ class Hit:
 
 
 class CorpusIndex:
-    def __init__(self, docs: dict[str, DocMeta], chunks: list[Chunk], embedder: Embedder | None = None) -> None:
+    def __init__(
+        self,
+        docs: dict[str, DocMeta],
+        chunks: list[Chunk],
+        embedder: Embedder | None = None,
+        vectors: np.ndarray | None = None,
+    ) -> None:
+        """`vectors` (one row per chunk, in order) can come from the ingestion cache; otherwise
+        the chunks are embedded here when an embedder is available."""
         self.docs = docs
         self.chunks = chunks
         self.embedder = embedder
@@ -64,16 +72,21 @@ class CorpusIndex:
         n = len(chunks)
         self._idf = {t: math.log(1 + (n - f + 0.5) / (f + 0.5)) for t, f in df.items()}
         self._vectors: np.ndarray | None = None
-        if embedder is not None and chunks:
+        if vectors is not None and embedder is not None and len(vectors) == len(chunks):
+            self._vectors = vectors
+        elif embedder is not None and chunks:
             try:
                 self._vectors = embedder.embed_documents([self.search_text(c) for c in chunks])
             except Exception as exc:
                 log.warning("embedding chunks failed, keyword retrieval only: %s", exc)
                 self._vectors = None
 
-    def search_text(self, chunk: Chunk) -> str:
-        meta = self.docs[chunk.doc_id]
+    @staticmethod
+    def text_for(meta: DocMeta, chunk: Chunk) -> str:
         return f"{meta.title}\n{chunk.heading}\n{chunk.text}"
+
+    def search_text(self, chunk: Chunk) -> str:
+        return self.text_for(self.docs[chunk.doc_id], chunk)
 
     def _bm25(self, query_tokens: list[str], idx: int, k1: float = 1.4, b: float = 0.75) -> float:
         tf = self._tf[idx]

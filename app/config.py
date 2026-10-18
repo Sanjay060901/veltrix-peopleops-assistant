@@ -29,6 +29,7 @@ class Settings:
     log_level: str = "INFO"
     history_turns: int = 6
     corpus_reload_seconds: float = 30.0  # 0 disables watching for corpus changes
+    cache_dir: str = ""  # ingestion cache keyed by file SHA-256; empty disables
 
     def today(self) -> date:
         """The service's notion of today (APP_TODAY, or the system date)."""
@@ -55,4 +56,5 @@ def load_settings() -> Settings:
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         history_turns=int(_env("HISTORY_TURNS", "6")),
         corpus_reload_seconds=float(_env("CORPUS_RELOAD_SECONDS", "30")),
+        cache_dir=_env("CACHE_DIR", "./.cache/ingest"),
     )

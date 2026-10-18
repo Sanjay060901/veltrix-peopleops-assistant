@@ -50,6 +50,7 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 | `CORPUS_TOKEN_BUDGET` | `3000` | hard cap on corpus tokens per LLM call |
 | `LEAVE_YEAR` | `2026` | the only year leave can be requested for |
 | `CORPUS_RELOAD_SECONDS` | `30` | how often to check `./data` for changed files; `0` = ingest at startup only |
+| `CACHE_DIR` | `./.cache/ingest` | ingestion cache keyed by file SHA-256 (a Docker volume in Compose); empty disables it |
 
 ## Architecture
 
@@ -97,7 +98,9 @@ flowchart LR
 
 Nothing about the corpus is hard-coded. Everything is derived from `CORPUS_DIR` and `MANIFEST_PATH` at ingestion.
 
-- **Edit, add, remove or rename files in `data/` while the service runs.** Every `CORPUS_RELOAD_SECONDS`, the watcher compares a fingerprint (name, size and modification time of the manifest and every corpus file). If anything changed, it re-ingests in the background. The old index keeps answering until the new one is swapped in, so `/health` stays 200.
+- **Edit, add, remove or rename files in `data/` while the service runs.** Every `CORPUS_RELOAD_SECONDS`, the watcher compares the **SHA-256 of every file's content**. A file is only re-read when its size or modification time changed, so the check is cheap. A file that is only touched, or overwritten with identical bytes, does not trigger anything. When content did change, it re-ingests in the background. The old index keeps answering until the new one is swapped in, so `/health` stays 200.
+- **Only changed files are re-processed.** Parsed sections, extracted holidays and embedding vectors are cached by content hash. After an edit, only that file is re-parsed and re-embedded (measured: 0.8 s instead of about 75 s). A restart with an unchanged corpus loads everything from the cache (ingestion 1.1 s instead of 64.5 s; `/health` 200 in about 11 s). On first start, or with a fresh `./data`, everything is processed once.
+- **See the hashes:** `python -m app.ingestion.inspect` (or `docker compose exec assistant python -m app.ingestion.inspect`) lists every document with its SHA-256, size and cache status, plus files in `corpus/` that the manifest doesn't list. It is a local command on purpose: an HTTP endpoint listing documents would reveal that restricted documents exist.
 - **Renaming a file:** update its `file` entry in `manifest.json`, since the manifest is the source of document metadata. If the manifest still names the old file, that document is skipped with a warning and everything else keeps working.
 - **Converting a file to another format** (for example `.md` to `.docx`) works the same way: point the manifest at the new file.
 - **A broken or unreadable file** is logged and skipped; the other documents still load.
@@ -108,7 +111,7 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 198 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 213 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
@@ -146,7 +149,7 @@ Run `make test` (pytest): 198 tests. The real-OCR test is skipped if Tesseract i
 - **Date phrases** the deterministic resolver doesn't know (for example "the week after Diwali") fall back to the LLM's reading.
 - **Future-balance arithmetic** is written by the LLM from the tool balance and the accrual rules. It is not computed in code.
 - **PDF headings** are detected from bold, larger fonts. A PDF whose headings use neither would be cited by page number.
-- **Re-ingestion is full, not incremental.** Any change re-parses and re-embeds the whole corpus (about 60–75 s on the container CPU). During that time, answers still come from the previous version of the corpus.
+- **The first start processes everything** (about 65 s on the container CPU) before `/health` turns 200; later restarts and edits reuse the SHA-256 cache. The BM25 statistics are rebuilt over all chunks on each reload, which is fast at this size.
 - **Single process:** the sessions and the write lock are per process.
 
 ## Sample queries

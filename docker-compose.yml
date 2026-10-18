@@ -6,6 +6,8 @@ services:
     volumes:
       # Graders replace ./data with their own corpus, manifest and database.
       - ./data:/app/data
+      # Ingestion cache survives container rebuilds; unchanged files are not re-parsed.
+      - ingest-cache:/app/.cache
     environment:
       CORPUS_DIR: ${CORPUS_DIR:-./data/corpus}
       MANIFEST_PATH: ${MANIFEST_PATH:-./data/manifest.json}
@@ -21,6 +23,7 @@ services:
       LEAVE_YEAR: ${LEAVE_YEAR:-2026}
       HISTORY_TURNS: ${HISTORY_TURNS:-6}
       CORPUS_RELOAD_SECONDS: ${CORPUS_RELOAD_SECONDS:-30}
+      CACHE_DIR: ${CACHE_DIR:-/app/.cache/ingest}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HF_HUB_OFFLINE: "1"
     healthcheck:
@@ -29,3 +32,6 @@ services:
       timeout: 5s
       retries: 60
       start_period: 20s
+
+volumes:
+  ingest-cache:
