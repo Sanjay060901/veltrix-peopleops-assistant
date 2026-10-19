@@ -135,7 +135,7 @@ There is no upload endpoint. Updated documents are dropped into `data/corpus/`, 
 
 ## Tests
 
-Run `make test` (pytest): 233 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
+Run `make test` (pytest): 243 tests. The real-OCR test is skipped if Tesseract is not installed. Tesseract is found on PATH, in `TESSERACT_CMD`, or in the standard Windows install folders (`winget install UB-Mannheim.TesseractOCR`). The tests build their own synthetic corpus, manifest and database ([tests/fixtures.py](tests/fixtures.py)). The volunteer-days documents reproduce the invented worked example in TASK §5.2, and no values are copied from the real corpus. The LLM is replaced by a scripted fake ([tests/fakes.py](tests/fakes.py)), so the tests are deterministic and need no network. They cover:
 
 - working days: weekends, holidays, ranges spanning both, region-specific calendars, optional holidays, calendar selection;
 - precedence: authority, scope, recency, unresolved conflict, agreement, upcoming changes, past reference dates;
@@ -169,7 +169,7 @@ Run `make test` (pytest): 233 tests. The real-OCR test is skipped if Tesseract i
 ## Known limitations
 
 - **Live validation is limited.** `scripts/smoke.py` was run end to end against live Gemini, using `gemini-3.5-flash-lite` because the free-tier key allowed only 20 requests a day on `gemini-3.6-flash`. All routes behaved as expected, and so did precedence, conflicts, upcoming changes and the accrual projection. The default model `gemini-3.6-flash` only had a few successful calls before the quota ran out. On the free tier, 429 or 5xx errors appear as "language service unavailable" answers (route `no_answer`).
-- **Precedence depends on rule grouping.** The code applies the §5 tests correctly, but it relies on the extraction call giving the same `rule_id` to claims about the same thing. If the LLM splits one rule into two, a stale FAQ value can appear as a separate fact.
+- **Precedence depends on rule grouping.** The §5 tests are applied in code, but they only compare claims that share a `rule_id`, which the extraction call assigns. A deterministic merge step (`merge_similar_rules()`) re-unites rules the LLM split. It is deliberately conservative, so an unusual split can still slip through, and then a lower-precedence value could appear as a separate fact.
 - **Value comparison is heuristic.** It compares numbers with their units, so "12 working days" equals "12 days" and "10 days" differs from "10 weeks". Unusual phrasings can cause a false conflict or a missed one.
 - **Date phrases** the deterministic resolver doesn't know (for example "the week after Diwali") fall back to the LLM's reading.
 - **Future-balance arithmetic** is written by the LLM from the tool balance and the accrual rules. It is not computed in code.
