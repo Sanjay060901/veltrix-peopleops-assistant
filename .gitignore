@@ -13,3 +13,6 @@ __pycache__/
 .pytest_cache/
 .cache/
 *.egg-info/
+
+# Internal working brief, not part of the submission
+CLAUDE.md
