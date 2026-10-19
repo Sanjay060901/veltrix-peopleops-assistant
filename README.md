@@ -43,7 +43,7 @@ Every variable is listed in [.env.example](.env.example). The defaults point at 
 |---|---|---|
 | `CORPUS_DIR`, `MANIFEST_PATH`, `DB_PATH` | `./data/...` | inputs |
 | `APP_TODAY` | system date | today, `YYYY-MM-DD` |
-| `LLM_PROVIDER` / `GOOGLE_API_KEY` | `gemini` / – | Gemini is the supported provider |
+| `LLM_PROVIDER` / `GOOGLE_API_KEY` | `gemini` / – | Gemini is the supported provider (`google` is accepted too); the key may also be given as `GEMINI_API_KEY` |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | any Gemini model that supports JSON-schema output |
 | `LLM_TIMEOUT_SECONDS` | `10` | per call (Gemini's minimum); one request makes at most 3 calls |
 | `EMBEDDING_PROVIDER` | `local` | `local` (fastembed, CPU) or `none` (BM25 only) |

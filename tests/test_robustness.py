@@ -137,3 +137,27 @@ def test_request_uses_temperature_zero_and_json_schema(monkeypatch):
     config = calls[0]
     assert config.temperature == 0 and config.response_mime_type == "application/json"
     assert config.response_json_schema == {"type": "object"} and config.seed is not None
+
+
+# --- reviewer configuration variants ------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+def test_either_api_key_name_is_accepted(monkeypatch, name):
+    from app.config import load_settings
+
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv(name, "key-123")
+    assert load_settings().google_api_key == "key-123"
+
+
+@pytest.mark.parametrize("provider", ["gemini", "GEMINI", "google", "Google-Gemini"])
+def test_provider_aliases_build_the_gemini_client(monkeypatch, provider):
+    from dataclasses import replace
+
+    from app.config import load_settings
+    from app.llm.gemini import build_llm
+
+    monkeypatch.setenv("LLM_PROVIDER", provider)
+    settings = replace(load_settings(), google_api_key="key-123")
+    assert isinstance(build_llm(settings), GeminiClient)

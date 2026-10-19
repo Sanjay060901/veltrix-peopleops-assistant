@@ -79,7 +79,7 @@ class GeminiClient(LLMClient):
 
 def build_llm(settings) -> LLMClient | None:
     provider = settings.llm_provider
-    if provider == "gemini":
+    if provider in ("gemini", "google", "google-gemini", "googleai", "google_genai"):
         try:
             return GeminiClient(
                 settings.google_api_key, settings.gemini_model, settings.llm_timeout_seconds, settings.corpus_token_budget

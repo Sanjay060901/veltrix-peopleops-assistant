@@ -15,6 +15,7 @@ services:
       APP_TODAY: ${APP_TODAY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}  # accepted as an alternative name
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-10}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
