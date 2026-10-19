@@ -118,6 +118,118 @@ def values_equal(a: str, b: str) -> bool:
 _NEGATION = re.compile(r"\b(not|no|never|cannot|can't|isn't|aren't|doesn't|don't|without|none)\b", re.I)
 
 
+# --- rule grouping safety net ------------------------------------------------------------------
+
+_MONTHS = {"january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december"}
+_DESC_STOP = {"the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "per", "by", "with", "at",
+              "employee", "employees", "staff", "rule", "policy", "allowance", "entitlement", "number"}
+
+
+def value_kinds(value: str) -> frozenset[str]:
+    """What kind of quantity a value is: its units (months collapse to 'date'), or 'text'."""
+    numbers, _ = _signature(value)
+    kinds = {("date" if u in _MONTHS else u) for _, u in numbers if u}
+    if numbers and not kinds:
+        kinds = {"number"}
+    return frozenset(kinds or {"text"})
+
+
+def description_overlap(a: str, b: str) -> float:
+    """Overlap coefficient of the content words of two rule descriptions."""
+    def words(text: str) -> set[str]:
+        return {_singular(w) for w in re.findall(r"[a-z]+", text.lower()) if w not in _DESC_STOP and len(w) > 2}
+
+    wa, wb = words(a), words(b)
+    if len(wa) < 2 or len(wb) < 2:
+        return 0.0
+    return len(wa & wb) / min(len(wa), len(wb))
+
+
+# Words that make two otherwise similar rules different ("primary" vs "secondary caregiver").
+_CONTRASTS = [
+    {"primary", "secondary"}, {"minimum", "maximum"}, {"before", "after"}, {"first", "last"},
+    {"paid", "unpaid"}, {"birth", "adoptive"}, {"full", "part"}, {"less", "more"}, {"start", "end"},
+    {"annual", "sick"}, {"maternity", "paternity"}, {"employee", "manager"},
+]
+
+
+def _numbers(text: str) -> set[str]:
+    return set(re.findall(r"\d+(?:\.\d+)?", text))
+
+
+def _contrasting(a: str, b: str) -> bool:
+    wa, wb = set(re.findall(r"[a-z]+", a.lower())), set(re.findall(r"[a-z]+", b.lower()))
+    return any((wa & pair) and (wb & pair) and (wa & pair) != (wb & pair) for pair in _CONTRASTS)
+
+
+def descriptions_compatible(a: str, b: str) -> bool:
+    """Hard guards: numbers named in the descriptions must match (accrual bands '<2 years' vs
+    '2-5 years'), and no contrasting qualifier may differ."""
+    return _numbers(a) == _numbers(b) and not _contrasting(a, b)
+
+
+def merge_similar_rules(
+    claims: list[Claim],
+    similarity: Callable[[str, str], float] | None = None,
+    similarity_threshold: float = 0.93,
+    overlap_threshold: float = 1.0,
+) -> list[Claim]:
+    """Give one rule_id to groups the extractor split but that state the same rule.
+
+    Precedence is only correct when competing claims share a rule_id, so this does not rely on the
+    LLM alone. It is conservative: a wrong merge would be worse than a missed one. Two groups are
+    merged only when all hold: one description's content words contain the other's, or their
+    embeddings are near-identical; numbers in the descriptions match and no contrasting qualifier
+    differs; the values are the same kind of quantity; and no document appears in both groups
+    (a document does not contradict itself, so two values from one document are two rules).
+    Deterministic: groups are processed in sorted order.
+    """
+    groups: dict[str, list[Claim]] = {}
+    for claim in claims:
+        groups.setdefault(claim.rule_id, []).append(claim)
+    ids = sorted(groups)
+    parent = {rid: rid for rid in ids}
+
+    def find(rid: str) -> str:
+        while parent[rid] != rid:
+            parent[rid] = parent[parent[rid]]
+            rid = parent[rid]
+        return rid
+
+    members = {rid: list(groups[rid]) for rid in ids}
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                continue
+            ga, gb = members[ra], members[rb]
+            if {c.doc.doc_id for c in ga} & {c.doc.doc_id for c in gb}:
+                continue
+            kinds_a = frozenset().union(*(value_kinds(c.value) for c in ga))
+            kinds_b = frozenset().union(*(value_kinds(c.value) for c in gb))
+            if not kinds_a & kinds_b:
+                continue
+            desc_a, desc_b = ga[0].rule, gb[0].rule
+            if not descriptions_compatible(desc_a, desc_b):
+                continue
+            # One description containing all the other's content words ("work from home days per
+            # week" vs the same "for the Austin office") or near-identical meaning.
+            same = description_overlap(desc_a, desc_b) >= overlap_threshold
+            if not same and similarity is not None:
+                same = similarity(desc_a, desc_b) >= similarity_threshold
+            if same:
+                keep, drop = sorted((ra, rb))
+                parent[drop] = keep
+                members[keep] = members[keep] + members.pop(drop)
+    return [
+        claim if find(claim.rule_id) == claim.rule_id
+        else Claim(claim.claim_id, find(claim.rule_id), groups[find(claim.rule_id)][0].rule, claim.value,
+                   claim.statement, claim.chunk, claim.doc)
+        for claim in claims
+    ]
+
+
 def _negated(value: str) -> bool:
     return bool(_NEGATION.search(value))
 

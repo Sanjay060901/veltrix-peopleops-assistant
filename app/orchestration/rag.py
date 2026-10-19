@@ -22,7 +22,7 @@ from app.llm.base import LLMClient, LLMError
 from app.llm.tokens import count_tokens
 from app.retrieval.eligibility import eligible_docs, upcoming_docs
 from app.retrieval.packer import pack
-from app.retrieval.precedence import Claim, Resolution, resolve
+from app.retrieval.precedence import Claim, Resolution, merge_similar_rules, resolve
 
 log = logging.getLogger(__name__)
 
@@ -182,6 +182,19 @@ def _fact_lines(resolutions: list[Resolution], docs: dict[str, DocMeta]) -> tupl
     return lines, facts, groups
 
 
+def _description_similarity(embedder, claims: list[Claim]):
+    """Cosine similarity of rule descriptions with the local embedding model (one batch)."""
+    descriptions = sorted({c.rule for c in claims})
+    if embedder is None or len(descriptions) < 2:
+        return None
+    try:
+        vectors = embedder.embed_documents(descriptions)
+    except Exception:
+        return None
+    lookup = dict(zip(descriptions, vectors))
+    return lambda a, b: float(lookup[a] @ lookup[b])
+
+
 def answer_from_documents(
     llm: LLMClient,
     corpus: Corpus,
@@ -201,6 +214,8 @@ def answer_from_documents(
     if not chunks:
         return RagResult("none")
     claims, coverage, uncovered = extract_claims(llm, question, chunks, corpus.docs, region)
+    # Safety net: re-unite rules the extractor split, so precedence compares the right claims.
+    claims = merge_similar_rules(claims, _description_similarity(corpus.index.embedder, claims))
     resolutions = resolve(claims, reference_date, include_upcoming=include_upcoming)
     resolutions = [r for r in resolutions if r.winners or r.upcoming]
     if not resolutions:
