@@ -2,11 +2,31 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Any
 
 log = logging.getLogger("app.llm")
+
+_request = threading.local()
+
+
+@contextmanager
+def request_deadline(seconds: float):
+    """Bound every LLM call made while handling one request (each request runs in one thread)."""
+    _request.deadline = time.monotonic() + seconds
+    try:
+        yield
+    finally:
+        _request.deadline = None
+
+
+def remaining_seconds() -> float | None:
+    """Time left for the current request, or None outside a request."""
+    deadline = getattr(_request, "deadline", None)
+    return None if deadline is None else deadline - time.monotonic()
 
 
 class LLMError(Exception):

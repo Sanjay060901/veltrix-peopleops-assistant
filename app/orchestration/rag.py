@@ -18,7 +18,7 @@ from datetime import date
 
 from app.ingestion.models import Chunk, DocMeta
 from app.ingestion.pipeline import Corpus
-from app.llm.base import LLMClient, LLMError
+from app.llm.base import LLMClient, LLMError, remaining_seconds
 from app.llm.tokens import count_tokens
 from app.retrieval.eligibility import eligible_docs, upcoming_docs
 from app.retrieval.packer import pack
@@ -30,6 +30,7 @@ UPCOMING_RESERVE = 600  # corpus tokens kept for not-yet-effective documents
 SOURCE_LABEL_TOKENS = 6  # "[S12] " prefix added to each block, counted as corpus text
 # If retrieval + extraction took this long, skip the compose call so the request stays under 30 s.
 COMPOSE_DEADLINE_SECONDS = 15.0
+COMPOSE_MIN_REMAINING = 11.0  # a compose call needs up to the 10 s Gemini deadline
 
 EXTRACT_SCHEMA = {
     "type": "object",
@@ -230,7 +231,8 @@ def answer_from_documents(
         + (["", f"Not covered by the documents: {uncovered}"] if uncovered and coverage != "full" else [])
     )
     answer, used = "", []
-    if time.monotonic() - started > COMPOSE_DEADLINE_SECONDS:
+    remaining = remaining_seconds()
+    if time.monotonic() - started > COMPOSE_DEADLINE_SECONDS or (remaining is not None and remaining < COMPOSE_MIN_REMAINING):
         log.warning("skipping compose to stay within the request time limit")
     else:
         try:

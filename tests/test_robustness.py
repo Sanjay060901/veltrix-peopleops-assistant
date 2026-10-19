@@ -161,3 +161,55 @@ def test_provider_aliases_build_the_gemini_client(monkeypatch, provider):
     monkeypatch.setenv("LLM_PROVIDER", provider)
     settings = replace(load_settings(), google_api_key="key-123")
     assert isinstance(build_llm(settings), GeminiClient)
+
+
+# --- deadline-aware retries ------------------------------------------------------------------------
+
+class _SlowClock:
+    """Each call to monotonic() advances 6 s, so every attempt looks slow."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        self.t += 6.0
+        return self.t
+
+
+def _overloaded():
+    return errors.ServerError(503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
+
+
+def test_slow_failure_is_retried_when_the_request_has_time(monkeypatch):
+    from app.llm import gemini
+
+    client, calls = _client(monkeypatch, [_overloaded(), '{"ok": true}'])
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: None)
+    monkeypatch.setattr(gemini, "remaining_seconds", lambda: 20.0)  # plenty left in this request
+    monkeypatch.setattr(gemini.time, "monotonic", _SlowClock())
+    assert _gen(client) == {"ok": True} and len(calls) == 2
+
+
+def test_slow_failure_is_not_retried_near_the_deadline(monkeypatch):
+    from app.llm import gemini
+
+    client, calls = _client(monkeypatch, [_overloaded(), '{"ok": true}'])
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: None)
+    monkeypatch.setattr(gemini, "remaining_seconds", lambda: 8.0)  # a second 10 s attempt would not fit
+    monkeypatch.setattr(gemini.time, "monotonic", _SlowClock())
+    with pytest.raises(LLMError):
+        _gen(client)
+    assert len(calls) == 1
+
+
+def test_request_deadline_is_per_thread():
+    from app.llm.base import remaining_seconds, request_deadline
+
+    assert remaining_seconds() is None
+    with request_deadline(27):
+        assert 26 < remaining_seconds() <= 27
+        seen = []
+        t = threading.Thread(target=lambda: seen.append(remaining_seconds()))
+        t.start(); t.join()
+        assert seen == [None]  # another request's thread is not affected
+    assert remaining_seconds() is None

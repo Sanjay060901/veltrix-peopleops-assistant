@@ -16,7 +16,7 @@ from app.data import repositories as repo
 from app.data.db import Database
 from app.data.repositories import Employee
 from app.ingestion.pipeline import Corpus
-from app.llm.base import LLMClient, LLMError
+from app.llm.base import LLMClient, LLMError, request_deadline
 from app.orchestration import responses as R
 from app.orchestration.dates import parse_iso, resolve_dates
 from app.orchestration.planner import Plan, is_confirmation, looks_like_manipulation, plan_message
@@ -29,6 +29,7 @@ from app.tools.permissions import EMPLOYEE_REFUSAL, PermissionDenied
 log = logging.getLogger(__name__)
 
 ROUTES = ("rag", "tool", "hybrid", "clarify", "no_answer", "refuse")
+REQUEST_DEADLINE_SECONDS = 27.0  # the spec allows 30 s per request; keep a margin
 _EMPLOYEE_ID = re.compile(r"\b([A-Za-z]{1,3}\d{2,})\b")
 _SELF_WORDS = {"", "me", "myself", "my", "i", "mine", "self", "my own"}
 
@@ -84,7 +85,7 @@ class Orchestrator:
     # --- entry point ---------------------------------------------------------------------
 
     def handle(self, requester: Employee, session: Session, message: str) -> ChatResult:
-        with session.lock:
+        with session.lock, request_deadline(REQUEST_DEADLINE_SECONDS):
             try:
                 result = self._handle(requester, session, message)
             except PermissionDenied as exc:

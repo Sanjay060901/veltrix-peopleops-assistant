@@ -6,11 +6,13 @@ import logging
 import time
 from typing import Any
 
-from app.llm.base import LLMClient, LLMError
+from app.llm.base import LLMClient, LLMError, remaining_seconds
 
 log = logging.getLogger(__name__)
 
 RETRY_WINDOW_SECONDS = 3.0
+RETRY_MARGIN_SECONDS = 2.0
+RETRY_BACKOFF_SECONDS = 0.5
 MIN_TIMEOUT_SECONDS = 10.0
 
 
@@ -71,9 +73,13 @@ class GeminiClient(LLMClient):
                 raise LLMError(f"gemini client error {getattr(exc, 'code', '')} {getattr(exc, 'status', '')}") from exc
             except Exception as exc:  # server errors, timeouts, malformed JSON
                 last_exc = exc
-                # Retry only if the failure was quick; every request must finish within 30 s.
-                if time.monotonic() - started > RETRY_WINDOW_SECONDS:
+                # Retry if the failure was quick, or if the request still has time for a full
+                # second attempt; every request must finish within 30 s.
+                remaining = remaining_seconds()
+                quick = time.monotonic() - started <= RETRY_WINDOW_SECONDS
+                if not quick and (remaining is None or remaining < self._timeout_ms / 1000 + RETRY_MARGIN_SECONDS):
                     break
+                time.sleep(RETRY_BACKOFF_SECONDS)
         raise LLMError(f"gemini call failed: {type(last_exc).__name__}") from last_exc
 
 
