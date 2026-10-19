@@ -174,3 +174,52 @@ def test_region_specific_faq_still_loses_to_global_policy_on_authority():
 def test_date_value_formats_compare_equal():
     assert values_equal("31 March", "March 31")
     assert not values_equal("31 March", "30 June")
+
+
+# --- extraction output that is not a value ---------------------------------------------------------
+
+def test_non_values_are_not_claims():
+    from app.orchestration.rag import is_non_value
+
+    for v in ("not specified", "Not stated.", "unknown", "N/A", "none given", "not mentioned in the source"):
+        assert is_non_value(v), v
+    for v in ("30 June", "not deducted", "no expiry", "up to 10 days", "none (no carry-forward)"):
+        assert not is_non_value(v), v
+
+
+def test_a_not_specified_claim_cannot_produce_an_answer(settings):
+    import uuid
+
+    from tests.conftest import make_client
+    from tests.fakes import FakeLLM
+
+    class NotSpecifiedLLM(FakeLLM):
+        def _extract(self, user):
+            label = "S1"
+            return {"rules": [{"rule_id": "R1", "description": "deadline"}],
+                    "claims": [{"rule_id": "R1", "source": label, "value": "not specified", "statement": "The source does not say.",
+                                "defers_to_other_document": False, "describes_other_version": False}],
+                    "coverage": "full", "uncovered": ""}
+
+    with make_client(settings, NotSpecifiedLLM()) as client:
+        body = client.post("/chat", headers={"X-Employee-Id": "X201"},
+                           json={"session_id": str(uuid.uuid4()), "message": "What is the volunteer deadline?"}).json()
+    assert body["route"] == "no_answer" and body["citations"] == []
+
+
+# --- relevance cut-off --------------------------------------------------------------------------
+
+def test_relevance_cutoff_keeps_chunks_strong_on_either_signal():
+    ordered = [0, 1, 2, 3, 4, 5]
+    dense = {0: 0.90, 1: 0.88, 2: 0.60, 3: 0.86, 4: 0.55, 5: 0.50}
+    bm25 = {0: 10.0, 1: 1.0, 2: 6.0, 3: 0.0, 4: 1.0, 5: 0.5}
+    kept = CorpusIndex._relevant(ordered, dense, bm25)
+    # 0,1,2 are the top three; 3 is close in meaning; 4 and 5 are weak on both signals.
+    assert kept == [0, 1, 2, 3]
+
+
+def test_relevance_cutoff_keeps_keyword_matches_far_in_meaning():
+    ordered = [0, 1, 2, 3]
+    dense = {0: 0.90, 1: 0.89, 2: 0.88, 3: 0.40}
+    bm25 = {0: 1.0, 1: 1.0, 2: 1.0, 3: 9.0}  # exact terms, different wording
+    assert 3 in CorpusIndex._relevant(ordered, dense, bm25)

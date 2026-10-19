@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from app.config import Settings
@@ -32,6 +32,9 @@ ROUTES = ("rag", "tool", "hybrid", "clarify", "no_answer", "refuse")
 REQUEST_DEADLINE_SECONDS = 27.0  # the spec allows 30 s per request; keep a margin
 _EMPLOYEE_ID = re.compile(r"\b([A-Za-z]{1,3}\d{2,})\b")
 _SELF_WORDS = {"", "me", "myself", "my", "i", "mine", "self", "my own"}
+# "make it until Friday", "extend it to 4 Nov": the date given is a new END of the pending request.
+_NEW_END = re.compile(r"\b(until|till|til|through|thru|to|ending|end on|up to|extend(?:ed)?)\b", re.I)
+_NEW_START = re.compile(r"\b(from|starting|start on|begin(?:ning)?|move it to|instead of)\b", re.I)
 
 
 @dataclass
@@ -138,7 +141,7 @@ class Orchestrator:
                 return ChatResult(R.DISCARDED, "clarify")
             if plan.intent == "modify_pending" and pending.tool == "apply_leave":
                 session.pending = None
-                return self._apply(ctx, session, plan, defaults=pending.args)
+                return self._apply(ctx, session, plan, defaults=pending.args, message=message)
             # Anything else discards the proposal and is handled normally (TASK §8.2).
             session.pending = None
 
@@ -290,12 +293,19 @@ class Orchestrator:
 
     # --- write tools: propose ------------------------------------------------------------
 
-    def _apply(self, ctx: T.ToolContext, session: Session, plan: Plan, defaults: dict | None = None) -> ChatResult:
+    def _apply(
+        self, ctx: T.ToolContext, session: Session, plan: Plan, defaults: dict | None = None, message: str = ""
+    ) -> ChatResult:
         defaults = defaults or {}
         leave_type = plan.leave_type or defaults.get("leave_type", "")
         start, end, problem = defaults.get("start"), defaults.get("end"), ""
         start_given = bool(plan.start_date_text or plan.start_date)
         end_given = bool(plan.end_date_text or plan.end_date)
+        if defaults and start_given and not end_given and _NEW_END.search(message) and not _NEW_START.search(message):
+            # The planner read "until 4 November" as a single new day; for a change to a pending
+            # proposal it means a new end date, keeping the proposed start.
+            plan = replace(plan, end_date_text=plan.start_date_text, end_date=plan.start_date, start_date_text="", start_date="")
+            start_given, end_given = False, True
         if start_given:
             dates = resolve_dates(
                 plan.start_date_text, plan.end_date_text, plan.start_date, plan.end_date, ctx.today, ctx.leave_year, allow_past=False

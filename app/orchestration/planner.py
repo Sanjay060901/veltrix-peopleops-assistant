@@ -65,7 +65,7 @@ Intents:
 - team_leave: the user wants to know which of their team members / direct reports are on leave or away in a date range.
 - apply_leave: the user wants to book, request or apply for leave.
 - cancel_leave: the user wants to cancel an existing leave request.
-- modify_pending: there is a pending proposal (shown below) and the user changes its details (for example "make it until Friday instead", "change it to sick leave").
+- modify_pending: there is a pending proposal (shown below) and the user changes its details (for example "make it until Friday instead", "change it to sick leave"). Fill only the fields the user changes: "until X", "till X", "to X" or "ending X" change only end_date_text/end_date; "from X" or "starting X" change only start_date_text/start_date.
 - confirm: there is a pending proposal and the user clearly confirms it.
 - decline: there is a pending proposal and the user says no or asks not to go ahead.
 - unclear: an HR-related request that is too vague to act on (for example "how many days do I get?" without saying for what). Put a short question in clarification_question.

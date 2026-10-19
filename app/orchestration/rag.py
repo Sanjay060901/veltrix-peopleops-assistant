@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -70,7 +71,7 @@ You receive a question and numbered sources [S1], [S2], ... Each source is an ex
 
 Task:
 1. Decide which rules (distinct things the question asks about, such as an allowance, a limit, a deadline, a procedure, a list of dates) the sources address. Give each rule a short rule_id (R1, R2, ...) and a description.
-2. For EVERY source that states something relevant to a rule, add a claim, even if sources disagree, look outdated, or come from an FAQ or wiki. Do not decide which source is right and do not merge sources: one claim per source per rule.
+2. For EVERY source that states something relevant to a rule, add a claim (only when the source itself states the value; never add a claim saying a value is not specified or not stated), even if sources disagree, look outdated, or come from an FAQ or wiki. Do not decide which source is right and do not merge sources: one claim per source per rule.
 3. All sources were already selected as applying to this employee (their office region is given below the question). Give claims the same rule_id when they set a value for the same thing, even if one source states it for all employees and another only for the employee's office or region (for example a global work-from-home limit and an office-specific work-from-home limit are the same rule). Use different rule_ids only for different groups of people or conditions (for example maternity leave for birth mothers vs parental leave for secondary caregivers).
 4. value: the minimal canonical value (for example "12 working days", "31 March", "up to 3 days per week", "not deducted"). statement: one faithful sentence of what that source says, including conditions, effective dates and who it applies to. Copy dates and numbers exactly.
 5. defers_to_other_document = true when the source does not state its own value but refers to another document (for example "the deadline in the Global Leave Policy").
@@ -102,6 +103,19 @@ class RagResult:
     answer: str = ""
     citations: list[tuple[str, str]] = field(default_factory=list)
     corpus_tokens: int = 0
+
+
+_NON_VALUE = re.compile(
+    r"^\W*(not\s+(specified|stated|mentioned|given|provided|covered|defined|available|applicable)|"
+    r"unspecified|unknown|unclear|none\s+(stated|given|specified)|n/?a|no\s+information|not\s+in\s+the\s+source)"
+    r"(\s+(in|by)\s+(the\s+)?(source|sources|document|documents|text|policy))?\W*$",
+    re.I,
+)
+
+
+def is_non_value(value: str) -> bool:
+    """'not specified' and the like are the absence of a rule, not a value that can compete."""
+    return bool(_NON_VALUE.match(value.strip()))
 
 
 def _source_blocks(chunks: list[Chunk], docs: dict[str, DocMeta]) -> tuple[list[str], dict[str, Chunk]]:
@@ -153,7 +167,7 @@ def extract_claims(
             continue
         value = str(item.get("value", "")).strip()
         statement = str(item.get("statement", "")).strip()
-        if not value or not statement:
+        if not value or not statement or is_non_value(value):
             continue
         rule_id = str(item.get("rule_id", "")).strip() or f"R{n}"
         claims.append(Claim(f"F{n}", rule_id, rules.get(rule_id, rule_id), value, statement, chunk, docs[chunk.doc_id]))

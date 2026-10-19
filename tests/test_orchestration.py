@@ -321,3 +321,25 @@ def test_route_contract(route, citations, calls, expected):
     if expected == "tool":
         assert result.citations == [] and result.tool_calls
     assert result.pending_confirmation == (expected == "tool")
+
+
+# --- changing a pending proposal: the planner may mislabel "until X" as a start date --------------
+
+@pytest.mark.parametrize("message", ["Make it until 18 September instead", "extend it to 18 September", "till the 18th please"])
+def test_until_changes_only_the_end_even_if_planner_says_start(settings, message):
+    mislabelled = {"intent": "modify_pending", "start_date_text": "18 September", "start_date": "2026-09-18"}
+    llm = scripted({"book": apply_plan("2026-09-16", "2026-09-17")}, default=mislabelled)
+    with make_client(settings, llm) as client:
+        _, session = chat(client, "X201", "book leave")
+        body, _ = chat(client, "X201", message, session)
+    assert body["pending_confirmation"]
+    assert body["tool_calls"][0]["args"] == {"leave_type": "annual", "start_date": "2026-09-16", "end_date": "2026-09-18"}
+
+
+def test_explicit_new_start_still_moves_the_start(settings):
+    moved = {"intent": "modify_pending", "start_date_text": "24 September", "start_date": "2026-09-24"}
+    llm = scripted({"book": apply_plan("2026-09-16", "2026-09-17")}, default=moved)
+    with make_client(settings, llm) as client:
+        _, session = chat(client, "X201", "book leave")
+        body, _ = chat(client, "X201", "move it to start from 24 September", session)
+    assert body["tool_calls"][0]["args"]["start_date"] == "2026-09-24"
