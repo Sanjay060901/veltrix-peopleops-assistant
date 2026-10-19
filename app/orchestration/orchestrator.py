@@ -98,6 +98,12 @@ class Orchestrator:
             except LLMError:
                 log.warning("llm failure employee=%s", requester.employee_id)
                 result = ChatResult(R.LLM_UNAVAILABLE, "no_answer")
+            except Exception:
+                # The spec allows only 400/401/403 as HTTP errors, so an unexpected failure is reported
+                # as a normal answer. Pending proposals are dropped; nothing was written.
+                log.exception("unexpected error employee=%s", requester.employee_id)
+                session.pending = None
+                result = ChatResult(R.INTERNAL_ERROR, "no_answer")
             result = enforce_route_contract(result)
             result.answer = scrub_answer(result.answer)
             if not result.pending_confirmation:
@@ -113,7 +119,9 @@ class Orchestrator:
             return result
 
     def _ctx(self, requester: Employee) -> T.ToolContext:
-        return T.ToolContext(self.db, self.corpus.docs, requester, self.settings.today(), self.settings.leave_year)
+        return T.ToolContext(
+            self.db, self.corpus.docs, requester, self.settings.today(), self.settings.leave_year, self.corpus.holidays
+        )
 
     def _handle(self, requester: Employee, session: Session, message: str) -> ChatResult:
         ctx = self._ctx(requester)

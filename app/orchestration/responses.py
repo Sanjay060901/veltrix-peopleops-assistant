@@ -25,6 +25,7 @@ NO_ANSWER = (
 )
 LLM_UNAVAILABLE = "Sorry, I can't process that request right now because the language service is unavailable. Please try again later."
 DISCARDED = "OK, I haven't made any changes."
+INTERNAL_ERROR = "Sorry, something went wrong while handling that request, and nothing was changed. Please try again."
 
 
 def fmt_date(d: date) -> str:

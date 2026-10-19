@@ -6,6 +6,7 @@ because data can change between proposal and confirmation.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -19,6 +20,8 @@ from app.ingestion.models import DocMeta
 from app.tools import permissions as perm
 from app.tools.working_days import choose_calendar, count_working_days
 
+log = logging.getLogger(__name__)
+
 LEAVE_TYPES = ("annual", "sick")
 STATUSES = ("pending", "approved", "cancelled")
 ACTIVE = ("pending", "approved")
@@ -31,6 +34,7 @@ class ToolContext:
     requester: Employee
     today: date
     leave_year: int
+    holidays: list = field(default_factory=list)  # ingested records, to rebuild the table if it vanished
 
 
 @dataclass
@@ -91,6 +95,8 @@ def get_team_leave(ctx: ToolContext, start_date: date, end_date: date) -> ToolOu
 # --- validation shared by proposal and execution --------------------------------------------
 
 def compute_working_days(conn: sqlite3.Connection, ctx: ToolContext, start: date, end: date) -> tuple[int, tuple[str, ...]]:
+    if repo.ensure_holidays(conn, [(h.doc_id, h.day.isoformat(), h.name, h.kind) for h in ctx.holidays]):
+        log.warning("holiday_calendar table was missing and has been rebuilt from the ingested corpus")
     choice = choose_calendar(conn, ctx.docs.values(), ctx.requester.role, ctx.requester.region, start.year, start)
     return count_working_days(start, end, choice.holidays), choice.doc_ids
 

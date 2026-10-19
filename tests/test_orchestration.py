@@ -343,3 +343,33 @@ def test_explicit_new_start_still_moves_the_start(settings):
         _, session = chat(client, "X201", "book leave")
         body, _ = chat(client, "X201", "move it to start from 24 September", session)
     assert body["tool_calls"][0]["args"]["start_date"] == "2026-09-24"
+
+
+# --- never a 500 ---------------------------------------------------------------------------------
+
+def test_missing_holiday_table_is_rebuilt_while_running(settings):
+    llm = scripted({"book": apply_plan("2026-09-18", "2026-09-21")})  # Fri + Mon; Mon 21st is an IN holiday
+    with make_client(settings, llm) as client:
+        conn = sqlite3.connect(settings.db_path)
+        conn.execute("DROP TABLE holiday_calendar")  # e.g. the DB file was swapped under a running service
+        conn.commit()
+        conn.close()
+        body, _ = chat(client, "X201", "book leave")
+    assert body["tool_calls"][0]["status"] == "pending_confirmation"
+    assert "Working days: 1" in body["answer"]  # the holiday still counts, from the rebuilt table
+
+
+def test_unexpected_error_is_a_200_not_a_500(settings, monkeypatch):
+    from app.tools import leave_tools
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("simulated bug")
+
+    monkeypatch.setattr(leave_tools, "get_leave_balance", broken)
+    llm = scripted({"balance": {"intent": "leave_balance"}})
+    with make_client(settings, llm) as client:
+        response = client.post("/chat", headers={"X-Employee-Id": "X201"},
+                               json={"session_id": str(uuid.uuid4()), "message": "my balance"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "no_answer" and body["tool_calls"] == [] and "nothing was changed" in body["answer"]

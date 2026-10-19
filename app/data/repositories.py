@@ -147,6 +147,20 @@ def replace_holidays(conn: sqlite3.Connection, records: Iterable[tuple[str, str,
     )
 
 
+def ensure_holidays(conn: sqlite3.Connection, records: Iterable[tuple[str, str, str, str]]) -> bool:
+    """Recreate and refill the holiday table if it is missing (e.g. the database file was replaced
+    while the service was running). Returns True when it had to be rebuilt."""
+    exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'holiday_calendar'").fetchone()
+    if exists:
+        return False
+    from app.data.db import ADDED_SCHEMA
+
+    for statement in ADDED_SCHEMA:
+        conn.execute(statement)
+    replace_holidays(conn, records)
+    return True
+
+
 def holidays_for_docs(conn: sqlite3.Connection, doc_ids: Sequence[str], kind: str = "closure") -> list[tuple[str, date, str]]:
     if not doc_ids:
         return []
